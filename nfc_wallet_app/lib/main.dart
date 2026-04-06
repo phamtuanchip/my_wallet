@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NFC Wallet App',
+      title: 'my_wallet',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
@@ -48,14 +48,15 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
   bool _isEmulating = false;
   bool _isSendingCard = false;
   NFCCard? _cardToSend;
+  String? _expandedCardId;
   
   // File selection state
   PlatformFile? _selectedFile;
   bool _isSendingFile = false;
+  double _fileSendProgress = 0.0;
   String _fileSendStatus = '';
   bool _isReceivingFile = false;
   String _fileReceiveStatus = '';
-  double _fileSendProgress = 0.0; // Progress from 0.0 to 1.0
   
   static const platform = MethodChannel('com.example.nfc_wallet_app/hce');
 
@@ -155,7 +156,61 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
     );
 
     await _loadSavedCards();
+    if (_expandedCardId == uid) {
+      setState(() {
+        _expandedCardId = null;
+      });
+    }
     logger.i('Deleted card with UID: $uid');
+  }
+
+  Future<void> _editCardName(NFCCard card) async {
+    final controller = TextEditingController(text: card.name);
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Card Name'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'Card name',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final newName = controller.text.trim();
+                if (newName.isNotEmpty) {
+                  _updateCardName(card, newName);
+                }
+                Navigator.of(context).pop();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _updateCardName(NFCCard card, String newName) async {
+    if (_database == null) return;
+    await _database!.update(
+      'cards',
+      {'name': newName},
+      where: 'id = ?',
+      whereArgs: [card.id],
+    );
+    await _loadSavedCards();
+    setState(() {
+      _expandedCardId = card.id;
+      _scanResult = 'Card name updated to $newName';
+    });
   }
 
   // Card Emulation Methods
@@ -868,7 +923,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('NFC Wallet Scanner'),
+        title: const Text('my_wallet'),
         elevation: 0,
         actions: [
           // File Send Action
@@ -1222,139 +1277,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
 
               // Saved Cards Section
               if (_savedCards.isNotEmpty)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Saved Cards',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '${_savedCards.length} cards',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _savedCards.length,
-                      itemBuilder: (context, index) {
-                        final card = _savedCards[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Row(
-                              children: [
-                                // Card Icon
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue[100],
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Icon(
-                                    Icons.credit_card,
-                                    color: Colors.blue,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                // Card Info
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        card.name,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'UID: ${card.uid}',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.grey[600],
-                                          fontFamily: 'Courier',
-                                        ),
-                                      ),
-                                      Text(
-                                        card.tagType,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                // Action Buttons
-                                Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // Send via NFC Button
-                                    IconButton(
-                                      onPressed: _isEmulating || _isSendingCard ? null : () => _sendCardViaNFC(card),
-                                      icon: Icon(
-                                        _isSendingCard && _cardToSend?.id == card.id
-                                            ? Icons.send
-                                            : Icons.send_outlined,
-                                        color: _isSendingCard && _cardToSend?.id == card.id
-                                            ? Colors.orange
-                                            : Colors.green,
-                                      ),
-                                      tooltip: _isSendingCard && _cardToSend?.id == card.id
-                                          ? 'Sending...'
-                                          : 'Send via NFC',
-                                    ),
-                                    // Emulate Button
-                                    IconButton(
-                                      onPressed: _isEmulating || _isSendingCard ? null : () => _startCardEmulation(card),
-                                      icon: Icon(
-                                        _isEmulating && _emulatingCard?.id == card.id
-                                            ? Icons.stop
-                                            : Icons.play_arrow,
-                                        color: _isEmulating && _emulatingCard?.id == card.id
-                                            ? Colors.red
-                                            : Colors.blue,
-                                      ),
-                                      tooltip: _isEmulating && _emulatingCard?.id == card.id
-                                          ? 'Stop Emulating'
-                                          : 'Emulate Card',
-                                    ),
-                                    // Delete Button
-                                    IconButton(
-                                      onPressed: () => _showDeleteDialog(context, card),
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        color: Colors.red,
-                                      ),
-                                      tooltip: 'Delete card',
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
+                _buildCardStack(),
             ],
           ),
         ),
@@ -1390,6 +1313,259 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildCardStack() {
+    final visibleCards = _savedCards.reversed.toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Saved Cards',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              '${_savedCards.length} cards',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 300,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: List.generate(visibleCards.length, (index) {
+              final card = visibleCards[index];
+              final isSelected = _expandedCardId == card.id;
+              final topOffset = index * 24.0;
+              return Positioned(
+                top: topOffset,
+                left: isSelected ? 0 : 24,
+                right: isSelected ? 0 : 24,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _expandedCardId = isSelected ? null : card.id;
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                    height: isSelected ? 240 : 220,
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: LinearGradient(
+                        colors: isSelected
+                            ? [Colors.indigo.shade700, Colors.blue.shade400]
+                            : [Colors.blueGrey.shade900, Colors.blueGrey.shade700],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.22),
+                          blurRadius: 20,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: Colors.white24,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Icon(
+                                Icons.credit_card,
+                                color: Colors.white,
+                                size: 26,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    card.tagType,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    card.name,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Text(
+                          'UID: ${card.uid}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontFamily: 'Courier',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (isSelected) ...[
+                          Text(
+                            card.tagType,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: _isEmulating || _isSendingCard ? null : () => _sendCardViaNFC(card),
+                                icon: const Icon(Icons.send),
+                                label: const Text('Share'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.blueGrey[900],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              ElevatedButton.icon(
+                                onPressed: _isEmulating || _isSendingCard ? null : () => _editCardName(card),
+                                icon: const Icon(Icons.edit),
+                                label: const Text('Edit Name'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white24,
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+        if (_expandedCardId != null) ...[
+          const SizedBox(height: 18),
+          _buildCardActionPanel(),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCardActionPanel() {
+    final selectedCard = _savedCards.firstWhere(
+      (card) => card.id == _expandedCardId,
+      orElse: () => _savedCards.isNotEmpty ? _savedCards.first : NFCCard(id: '', uid: '', name: '', tagType: '', content: null, timestamp: DateTime.now()),
+    );
+
+    if (selectedCard.id.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Card Details',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[900],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              selectedCard.name,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              selectedCard.tagType,
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'UID: ${selectedCard.uid}',
+              style: const TextStyle(fontSize: 12, fontFamily: 'Courier'),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isEmulating || _isSendingCard ? null : () => _sendCardViaNFC(selectedCard),
+                    icon: const Icon(Icons.send),
+                    label: const Text('Share Card'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _editCardName(selectedCard),
+                    icon: const Icon(Icons.edit),
+                    label: const Text('Edit Name'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey[200],
+                      foregroundColor: Colors.black,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () => _showDeleteDialog(context, selectedCard),
+              icon: const Icon(Icons.delete),
+              label: const Text('Delete Card'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

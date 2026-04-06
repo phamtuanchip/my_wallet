@@ -1,82 +1,101 @@
 # Flutter NFC Expert Skill
 
-A complete, production-ready Flutter skill for building NFC-enabled wallet and card management applications. Covers Mifare card reading, NDEF parsing, SQLite storage, and Android HCE card emulation.
+A complete, production-ready Flutter skill for building NFC-enabled wallet and card management applications. This skill provides step-by-step guidance for implementing Mifare card reading, NDEF parsing, SQLite storage, and Android HCE card emulation.
 
-## Quick Start
+## How to Use This Skill
 
-**Type `/flutter-nfc-expert` in VS Code chat** to invoke this skill with guidance tailored to your task.
+**Type `/flutter-nfc-expert` in VS Code chat** to invoke this skill with guidance tailored to your NFC development task.
 
-### Common Workflows
+### Quick Implementation Flow
 
-| Task | Start Here |
-|------|-----------|
-| Set up new NFC project | [SKILL.md](./SKILL.md#1-project-setup--dependencies) |
-| Scan NFC tags (Mifare/NDEF) | [SKILL.md](./SKILL.md#2-nfc-reader-implementation) + [nfc-reader-example.dart](./assets/nfc-reader-example.dart) |
-| Store card data persistently | [SKILL.md](./SKILL.md#3-local-data-storage-with-sqlite) + [card-storage-example.dart](./assets/card-storage-example.dart) |
-| Enable phone-as-card (HCE) | [SKILL.md](./SKILL.md#4-card-emulation-hce-setup) + [hce-emulation-example.dart](./assets/hce-emulation-example.dart) + [HCE guide](./references/hce-guide.md) |
-| Troubleshoot NFC issues | [SKILL.md](./SKILL.md#6-common-issues--troubleshooting) |
+1. **Project Setup** → Add dependencies and configure Android manifest
+2. **NFC Reading** → Implement tag scanning and data extraction
+3. **Data Storage** → Set up SQLite database for card persistence
+4. **Card Emulation** → Enable HCE for virtual card functionality
+5. **Testing** → Validate on physical devices with NFC hardware
 
-## What's Inside
+### Common Development Tasks
+
+| Task | Skill Section | Key Files |
+|------|---------------|-----------|
+| Set up new NFC project | [Step 1: Setup](./SKILL.md#1-project-setup--dependencies) | [pubspec-nfc.yaml](./assets/pubspec-nfc.yaml) |
+| Scan NFC tags (Mifare/NDEF) | [Step 2: Reader](./SKILL.md#2-nfc-reader-implementation) | [nfc-reader-example.dart](./assets/nfc-reader-example.dart) |
+| Store card data persistently | [Step 3: Storage](./SKILL.md#3-local-data-storage-with-sqlite) | [card-storage-example.dart](./assets/card-storage-example.dart) |
+| Enable phone-as-card (HCE) | [Step 4: Emulation](./SKILL.md#4-card-emulation-hce-setup) | [hce-emulation-example.dart](./assets/hce-emulation-example.dart) |
+| Troubleshoot NFC issues | [Step 6: Issues](./SKILL.md#6-common-issues--troubleshooting) | [NFC standards](./references/nfc-standards.md) |
+
+## Skill Contents
 
 ```
 .github/skills/flutter-nfc-expert/
-├── SKILL.md                        # Main skill: steps 1-6 for complete workflow
-├── README.md                       # This file
+├── SKILL.md                        # Complete implementation workflow (6 steps)
+├── README.md                       # This usage guide
 ├── references/
-│   ├── nfc-standards.md           # Mifare + NDEF format reference
+│   ├── nfc-standards.md           # Mifare + NDEF format specifications
 │   └── hce-guide.md               # Android card emulation architecture
 └── assets/
-    ├── pubspec-nfc.yaml           # Dependencies to add
-    ├── nfc-reader-example.dart    # Complete NFC scanning service
+    ├── pubspec-nfc.yaml           # Required dependencies
+    ├── nfc-reader-example.dart    # NFC scanning implementation
     ├── card-storage-example.dart  # SQLite database layer
-    └── hce-emulation-example.dart # Card emulation example (Dart side)
+    └── hce-emulation-example.dart # Card emulation example
 ```
 
-## Key Features
+## Implementation Checklist
 
-✅ **Full NFC Stack**: Mifare Classic/Ultralight reading, NDEF parsing, card detection  
-✅ **SQLite Storage**: Persistent card database with transaction history  
-✅ **HCE Support**: Turn your phone into a virtual card (Android 4.4+)  
-✅ **Production Ready**: Error handling, logging, validation, security patterns  
-✅ **Well Documented**: Inline code comments + detailed reference guides  
+### ✅ Phase 1: Foundation
+- [ ] Flutter project created with NFC dependencies
+- [ ] Android manifest configured for NFC permissions
+- [ ] Basic NFC session management implemented
 
-## Technologies
+### ✅ Phase 2: Reading
+- [ ] Mifare Classic/Ultralight tag detection
+- [ ] NDEF message parsing and record extraction
+- [ ] UID extraction and format identification
+- [ ] Error handling for different tag types
 
-- **Flutter**: 3.0+
-- **Android**: API 19+ (NFC), API 21+ (HCE)
-- **Packages**: nfc_manager, sqflite, uuid, logger
-- **Formats**: Mifare Classic/Ultralight, NDEF, APDU
+### ✅ Phase 3: Storage
+- [ ] SQLite database schema for cards
+- [ ] CRUD operations (Create, Read, Update, Delete)
+- [ ] Duplicate detection and conflict resolution
+- [ ] Data serialization and migration support
 
-## Use Cases
+### ✅ Phase 4: Emulation
+- [ ] Android HCE service implementation
+- [ ] APDU command handling
+- [ ] AID (Application Identifier) configuration
+- [ ] Virtual card data mapping
 
-- 💳 **Wallet Apps**: Scan transit/payment cards, store data locally
-- 🏢 **Access Control**: Read office badges, emit as virtual card at entry
-- 🎟️ **Loyalty Programs**: Store customer card data with balance tracking
-- 🔐 **Secure Data**: HCE allows card emulation without microSD secure element
+### ✅ Phase 5: Testing
+- [ ] Physical NFC tag testing
+- [ ] Card reader compatibility verification
+- [ ] HCE service activation testing
+- [ ] Performance and stress testing
 
-## Next Steps After Setup
+## Getting Started with the Skill
 
-1. Choose your primary use case (reading vs. emulation)
-2. Review [nfc-standards.md](./references/nfc-standards.md) to understand your target card format
-3. Copy relevant code from `assets/` folder into your project
-4. Configure `AndroidManifest.xml` with NFC permissions (see SKILL.md step 1.3)
-5. Test on physical device with NFC tags
+1. **Invoke the skill**: Type `/flutter-nfc-expert` in VS Code chat
+2. **Describe your task**: "I need to scan Mifare tags" or "Set up HCE card emulation"
+3. **Follow the guidance**: The skill provides step-by-step implementation instructions
+4. **Use code examples**: Copy and adapt code from the `assets/` folder
+5. **Test thoroughly**: Always validate on physical NFC hardware
 
 ## Troubleshooting
 
 **Can't find the skill?**
-- Ensure `.github/skills/flutter-nfc-expert/` is in your workspace root
-- Reload VS Code (`Ctrl+Shift+P` → "Developer: Reload Window")
+- Ensure `.github/skills/flutter-nfc-expert/` exists in your workspace
+- Reload VS Code window (`Ctrl+Shift+P` → "Developer: Reload Window")
 
-**Code examples have errors?**
-- They're production patterns, not copy-paste. Adjust for your project structure.
-- Verify all dependencies from `pubspec-nfc.yaml` are added to your `pubspec.yaml`
+**Code examples don't work?**
+- They're production patterns, not copy-paste code
+- Adapt them to your specific project structure and requirements
+- Check that all dependencies are properly installed
 
-**NFC not working on device?**
-- See [SKILL.md troubleshooting section](./SKILL.md#6-common-issues--troubleshooting)
-- Check `adb logcat` for NFC activity
-- Ensure Android manifest is correctly configured
+**NFC features not working?**
+- Review [SKILL.md troubleshooting](./SKILL.md#6-common-issues--troubleshooting)
+- Check Android manifest configuration
+- Verify device has NFC hardware and permissions
+- Use `adb logcat` to monitor NFC activity
 
 ---
 
-**Full guidance:** Use the skill by typing `/flutter-nfc-expert` in VS Code chat, or read through [SKILL.md](./SKILL.md) sequentially.
+**Full documentation:** Read [SKILL.md](./SKILL.md) for complete implementation guidance with code examples and best practices.

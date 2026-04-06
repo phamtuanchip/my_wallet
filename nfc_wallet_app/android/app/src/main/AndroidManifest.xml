@@ -5,7 +5,7 @@
     <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
     
     <application
-        android:label="nfc_wallet_app"
+        android:label="my_wallet"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
