@@ -55,6 +55,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
   String _fileSendStatus = '';
   bool _isReceivingFile = false;
   String _fileReceiveStatus = '';
+  double _fileSendProgress = 0.0; // Progress from 0.0 to 1.0
   
   static const platform = MethodChannel('com.example.nfc_wallet_app/hce');
 
@@ -424,6 +425,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
     try {
       setState(() {
         _fileSendStatus = 'Starting file transfer...';
+        _fileSendProgress = 0.1;
       });
 
       await NfcManager.instance.startSession(
@@ -432,8 +434,16 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
         },
         onDiscovered: (NfcTag tag) async {
           try {
+            setState(() {
+              _fileSendProgress = 0.5;
+            });
+            
             final ndefTag = Ndef.from(tag);
             if (ndefTag != null && ndefTag.isWritable) {
+              setState(() {
+                _fileSendProgress = 0.8;
+              });
+              
               await ndefTag.write(message);
               await NfcManager.instance.stopSession();
 
@@ -441,6 +451,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
                 _fileSendStatus = 'File sent successfully!\n${_selectedFile?.name}';
                 _isSendingFile = false;
                 _selectedFile = null;
+                _fileSendProgress = 1.0;
               });
 
               ScaffoldMessenger.of(context).showSnackBar(
@@ -452,12 +463,14 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
               setState(() {
                 _fileSendStatus = 'Error: Device does not support file transfer';
                 _isSendingFile = false;
+                _fileSendProgress = 0.0;
               });
             }
           } catch (e) {
             setState(() {
               _fileSendStatus = 'Error sending file: $e';
               _isSendingFile = false;
+              _fileSendProgress = 0.0;
             });
             logger.e('Error writing file to peer device: $e');
           }
@@ -468,7 +481,22 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
       setState(() {
         _isSendingFile = false;
         _fileSendStatus = 'Error starting file transfer: $e';
+        _fileSendProgress = 0.0;
       });
+    }
+  }
+
+  Future<void> _stopFileSending() async {
+    try {
+      await NfcManager.instance.stopSession();
+      setState(() {
+        _isSendingFile = false;
+        _fileSendStatus = 'File sending cancelled';
+        _fileSendProgress = 0.0;
+      });
+      logger.i('File sending stopped by user');
+    } catch (e) {
+      logger.e('Error stopping file sending: $e');
     }
   }
 
@@ -1048,20 +1076,41 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: _isReceivingFile ? Colors.green[50] : Colors.blue[50],
+                            color: _isReceivingFile ? Colors.green[50] : _isSendingFile ? Colors.orange[50] : Colors.blue[50],
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: _isReceivingFile ? Colors.green[200]! : Colors.blue[200]!),
+                            border: Border.all(color: _isReceivingFile ? Colors.green[200]! : _isSendingFile ? Colors.orange[200]! : Colors.blue[200]!),
                           ),
-                          child: Text(
-                            _fileReceiveStatus.isNotEmpty 
-                              ? _fileReceiveStatus
-                              : _selectedFile != null 
-                                ? 'Selected: ${_selectedFile!.name} (${(_selectedFile!.size / 1024).round()} KB)'
-                                : _fileSendStatus,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: _isReceivingFile ? Colors.green[800] : Colors.blue[800],
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _fileReceiveStatus.isNotEmpty 
+                                  ? _fileReceiveStatus
+                                  : _selectedFile != null 
+                                    ? 'Selected: ${_selectedFile!.name} (${(_selectedFile!.size / 1024).round()} KB)'
+                                    : _fileSendStatus,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _isReceivingFile ? Colors.green[800] : _isSendingFile ? Colors.orange[800] : Colors.blue[800],
+                                ),
+                              ),
+                              if (_isSendingFile && _fileSendProgress > 0) ...[
+                                const SizedBox(height: 8),
+                                LinearProgressIndicator(
+                                  value: _fileSendProgress,
+                                  backgroundColor: Colors.grey[300],
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${(_fileSendProgress * 100).round()}% complete',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.orange[700],
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       
@@ -1081,6 +1130,17 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
                           },
                           icon: const Icon(Icons.cancel),
                           label: const Text('Cancel Reception'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                        )
+                      else if (_isSendingFile)
+                        // Stop sending button
+                        ElevatedButton.icon(
+                          onPressed: _stopFileSending,
+                          icon: const Icon(Icons.stop),
+                          label: const Text('Stop Sending'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,
@@ -1116,6 +1176,37 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
                         ),
                       
                       const SizedBox(height: 8),
+                      
+                      // View received files button
+                      if (!_isReceivingFile && !_isSendingFile)
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            // Open the Downloads folder
+                            try {
+                              final directory = await getDownloadsDirectory();
+                              if (directory != null) {
+                                // On Android, we can't directly open the file manager
+                                // But we can show a message with the path
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Files saved to: ${directory.path}'),
+                                    duration: const Duration(seconds: 5),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Unable to access Downloads folder')),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.folder_open),
+                          label: const Text('View Received Files'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
                       const Text(
                         'Supported: Images (JPG, PNG), Documents (PDF, DOC), Text files',
                         style: TextStyle(
