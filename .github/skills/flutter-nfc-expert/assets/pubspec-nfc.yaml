@@ -1,0 +1,35 @@
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # NFC Reading & Writing
+  nfc_manager: ^3.0.0              # Primary NFC library for iOS/Android
+  
+  # Database & Storage
+  sqflite: ^2.3.0                  # SQLite database
+  path_provider: ^2.0.0            # Platform-specific file paths
+  uuid: ^4.0.0                     # Generate unique IDs for cards
+  
+  # JSON & Data Serialization
+  json_serializable: ^6.7.0        # Code generation for JSON
+  json_annotation: ^4.8.1          # JSON annotation decorators
+  
+  # Async & Reactive
+  async: ^2.11.0                   # Async utilities
+  
+  # Logging & Debugging
+  logger: ^1.4.0                   # Structured logging
+  
+  # State Management
+  provider: ^6.0.0                 # Simple state management
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  
+  build_runner: ^2.4.0             # Code generation runner
+  json_serializable: ^6.7.0        # JSON serialization code gen
+  sqflite_common_ffi: ^2.3.0       # Desktop SQLite for testing
+  
+flutter:
+  uses-material-design: true
