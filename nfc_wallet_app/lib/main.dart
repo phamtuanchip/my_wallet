@@ -4,6 +4,7 @@ import 'package:logger/logger.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyApp());
@@ -38,6 +39,10 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
   bool _isScanning = false;
   List<NFCCard> _savedCards = [];
   Database? _database;
+  NFCCard? _emulatingCard;
+  bool _isEmulating = false;
+  
+  static const platform = MethodChannel('com.example.nfc_wallet_app/hce');
 
   @override
   void initState() {
@@ -136,6 +141,72 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
 
     await _loadSavedCards();
     logger.i('Deleted card with UID: $uid');
+  }
+
+  // Card Emulation Methods
+  Future<void> _startCardEmulation(NFCCard card) async {
+    try {
+      // Communicate with native Android code to start HCE
+      final result = await platform.invokeMethod('startCardEmulation', {
+        'cardId': card.id,
+        'cardName': card.name,
+        'cardUid': card.uid,
+        'cardData': card.content ?? '',
+      });
+
+      setState(() {
+        _emulatingCard = card;
+        _isEmulating = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Emulating card: ${card.name}')),
+      );
+
+      logger.i('Started emulating card: ${card.name}, result: $result');
+    } on PlatformException catch (e) {
+      logger.e('Platform exception starting card emulation: ${e.message}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start card emulation: ${e.message}')),
+      );
+    } catch (e) {
+      logger.e('Error starting card emulation: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to start card emulation')),
+      );
+    }
+  }
+
+  Future<void> _stopCardEmulation() async {
+    try {
+      // Communicate with native Android code to stop HCE
+      final result = await platform.invokeMethod('stopCardEmulation');
+
+      setState(() {
+        _emulatingCard = null;
+        _isEmulating = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Card emulation stopped')),
+      );
+
+      logger.i('Stopped card emulation, result: $result');
+    } on PlatformException catch (e) {
+      logger.e('Platform exception stopping card emulation: ${e.message}');
+      // Still update UI even if native call fails
+      setState(() {
+        _emulatingCard = null;
+        _isEmulating = false;
+      });
+    } catch (e) {
+      logger.e('Error stopping card emulation: $e');
+      // Still update UI
+      setState(() {
+        _emulatingCard = null;
+        _isEmulating = false;
+      });
+    }
   }
 
   Future<void> _checkNFCAvailability() async {
@@ -319,16 +390,65 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+
+              // Emulation Status Card
+              if (_isEmulating && _emulatingCard != null)
+                Card(
+                  elevation: 4,
+                  color: Colors.green[50],
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.nfc, color: Colors.green[700]),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Card Emulation Active',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Emulating: ${_emulatingCard!.name}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.green[700],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: _stopCardEmulation,
+                          icon: const Icon(Icons.stop),
+                          label: const Text('Stop Emulation'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_isEmulating && _emulatingCard != null)
+                const SizedBox(height: 16),
 
               // Scan Button
               ElevatedButton.icon(
-                onPressed: _isScanning ? null : _startNFCSession,
+                onPressed: (_isScanning || _isEmulating) ? null : _startNFCSession,
                 icon: const Icon(Icons.nfc),
-                label: Text(_isScanning ? 'Scanning...' : 'Tap to Scan NFC Card'),
+                label: Text(_isEmulating ? 'Emulation Active' : _isScanning ? 'Scanning...' : 'Tap to Scan NFC Card'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Colors.blue,
+                  backgroundColor: _isEmulating ? Colors.grey : Colors.blue,
                   disabledBackgroundColor: Colors.grey,
                 ),
               ),
@@ -416,14 +536,35 @@ class _NFCScannerScreenState extends State<NFCScannerScreen> {
                                     ],
                                   ),
                                 ),
-                                // Delete Button
-                                IconButton(
-                                  onPressed: () => _showDeleteDialog(context, card),
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  tooltip: 'Delete card',
+                                // Action Buttons
+                                Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // Emulate Button
+                                    IconButton(
+                                      onPressed: _isEmulating ? null : () => _startCardEmulation(card),
+                                      icon: Icon(
+                                        _isEmulating && _emulatingCard?.id == card.id
+                                            ? Icons.stop
+                                            : Icons.play_arrow,
+                                        color: _isEmulating && _emulatingCard?.id == card.id
+                                            ? Colors.red
+                                            : Colors.blue,
+                                      ),
+                                      tooltip: _isEmulating && _emulatingCard?.id == card.id
+                                          ? 'Stop Emulating'
+                                          : 'Emulate Card',
+                                    ),
+                                    // Delete Button
+                                    IconButton(
+                                      onPressed: () => _showDeleteDialog(context, card),
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                      ),
+                                      tooltip: 'Delete card',
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),

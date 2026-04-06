@@ -41,6 +41,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+            
+        <!-- Card Emulation Service for HCE -->
+        <service android:name=".nfc.CardEmulationService"
+                 android:exported="true"
+                 android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+            </intent-filter>
+            <meta-data android:name="android.nfc.cardemulation.host_apdu_service"
+                       android:resource="@xml/hce_apdu_service" />
+        </service>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

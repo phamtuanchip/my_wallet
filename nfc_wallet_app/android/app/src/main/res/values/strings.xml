@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="hce_service_description">NFC Wallet Card Emulation Service</string>
+    <string name="hce_aid_group_description">Virtual Card AIDs for NFC Wallet</string>
+</resources>
