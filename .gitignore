@@ -1,0 +1,43 @@
+# Design files
+app-design/
+
+# Flutter/Dart
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/pubspec.lock
+
+# Android
+**/android/.gradle/
+**/android/captures/
+**/android/local.properties
+**/android/key.properties
+
+# iOS
+**/ios/.symlinks/
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/ios/Pods/
+
+# macOS
+**/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
