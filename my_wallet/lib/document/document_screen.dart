@@ -402,6 +402,7 @@ class _DocumentScreenState extends State<DocumentScreen> {
           children: [
             Text(_kind.vnLabel, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: _kind.color)),
             const SizedBox(height: 12),
+            if (_kind.phoneReplacement != null) ...[_phoneReplaceBanner(scheme), const SizedBox(height: 16)],
             if (_kind.hasChip) ...[_chipCard(scheme), const SizedBox(height: 16)],
             if (_kind == DocumentKind.accessCard) ...[_accessReaderCard(scheme), const SizedBox(height: 16)],
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -562,6 +563,35 @@ class _DocumentScreenState extends State<DocumentScreen> {
     if (id == null || !mounted) return;
     _applyFields(id.toFields(), overwrite: true);
     _snack('Card ${id.hex ?? ''} saved in the form.');
+  }
+
+  /// Honest "can the phone replace this card?" banner for electronic kinds.
+  Widget _phoneReplaceBanner(ColorScheme scheme) {
+    final info = _kind.phoneReplacement!;
+    final (icon, color, title) = switch (info.level) {
+      PhoneReplaceLevel.yes => (LucideIcons.smartphoneNfc, Colors.green, 'Can replace with the phone'),
+      PhoneReplaceLevel.limited => (LucideIcons.triangleAlert, const Color(0xFFCC8A00), 'Phone: limited use'),
+      PhoneReplaceLevel.no => (LucideIcons.ban, scheme.error, 'Phone cannot replace this'),
+    };
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(color: color, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(info.reason, style: Theme.of(context).textTheme.bodySmall),
+          ]),
+        ),
+      ]),
+    );
   }
 
   Widget _accessReaderCard(ColorScheme scheme) {

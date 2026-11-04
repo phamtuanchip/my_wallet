@@ -2,6 +2,19 @@ import 'dart:typed_data';
 
 import 'package:flutter/painting.dart';
 
+/// Can a phone act as this card/document at a reader?
+enum PhoneReplaceLevel {
+  yes, // works (e.g. a custom-AID card the user controls)
+  limited, // works only in special cases
+  no, // not possible
+}
+
+class PhoneReplacement {
+  const PhoneReplacement(this.level, this.reason);
+  final PhoneReplaceLevel level;
+  final String reason;
+}
+
 /// Kinds of personal documents kept in the vault. [hasChip] kinds can be read
 /// over NFC (ICAO eMRTD); the others are stored as front/back photos + fields.
 enum DocumentKind {
@@ -31,6 +44,29 @@ enum DocumentKind {
         DocumentKind.accessCard =>
           true,
         DocumentKind.passport || DocumentKind.insurance || DocumentKind.other => false,
+      };
+
+  /// Whether a phone can stand in for the physical document at a reader, and a
+  /// short honest reason. Electronic kinds only; paper documents return null.
+  PhoneReplacement? get phoneReplacement => switch (this) {
+        DocumentKind.cccd => const PhoneReplacement(
+            PhoneReplaceLevel.no,
+            'Phones cannot replace the chip ID. The chip is signed by the issuer and verified '
+            'by the reader, so a copy from the phone is rejected.',
+          ),
+        DocumentKind.passport => const PhoneReplacement(
+            PhoneReplaceLevel.no,
+            'Phones cannot replace a passport. Border chips use digital signatures the phone '
+            'cannot reproduce.',
+          ),
+        DocumentKind.accessCard => const PhoneReplacement(
+            PhoneReplaceLevel.limited,
+            '125 kHz cards (most lifts/parking): phones cannot transmit this frequency. '
+            '13.56 MHz cards (MIFARE, smart locks): the reader checks a fixed UID and secret keys '
+            'the phone cannot fake. The phone works only with a system set up to accept its custom '
+            'AID (your own door/project, via HCE).',
+          ),
+        _ => null, // paper documents: nothing to emulate
       };
 
   static DocumentKind fromName(String? name) =>

@@ -2819,6 +2819,24 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
             ],
           ),
 
+          const SizedBox(height: 8),
+          // Honest note: HCE only works with readers set up to accept this
+          // app's custom AID. It cannot stand in for a bank card, a door badge
+          // that checks the UID/keys, or an ID chip.
+          Row(
+            children: [
+              Icon(LucideIcons.info, size: 13, color: isDark ? Colors.white38 : Colors.black38),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Works only with readers set to accept this app (custom AID). '
+                  'It cannot replace a bank card, a door/lift badge, or an ID chip.',
+                  style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black45, height: 1.3),
+                ),
+              ),
+            ],
+          ),
+
           const SizedBox(height: 20),
 
           // Card preview
