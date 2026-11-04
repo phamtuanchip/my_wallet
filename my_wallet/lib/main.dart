@@ -12,18 +12,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:my_wallet/utils/file_transfer_utils.dart';
-
-// Card background color palette (matches Apple Wallet Business Card design)
-const List<Color> kCardColors = [
-  Color(0xFFE05252), // Coral Red
-  Color(0xFFE8677A), // Pink
-  Color(0xFFE5844A), // Orange
-  Color(0xFFD4A837), // Amber
-  Color(0xFF4CAF7D), // Green
-  Color(0xFF4A90D9), // Blue
-  Color(0xFF7B68D9), // Purple
-  Color(0xFF2C2C2E), // Dark (default)
-];
+import 'package:my_wallet/card/card_color.dart';
+import 'package:my_wallet/card/card_details_screen.dart';
+import 'package:my_wallet/card/card_info.dart';
+import 'package:my_wallet/security/app_auth.dart';
+import 'package:my_wallet/security/vault_crypto.dart';
+import 'package:my_wallet/widgets/wallet_card_face.dart';
+import 'package:my_wallet/widgets/wallet_card_stack.dart';
 
 void main() {
   runApp(const MyApp());
@@ -68,7 +63,9 @@ class NFCScannerScreen extends StatefulWidget {
 }
 
 class _NFCScannerScreenState extends State<NFCScannerScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  final VaultCrypto _vault = VaultCrypto(SecureVaultKeyStore());
+
   final logger = Logger();
   String _scanResult = 'Tap card to scan';
   bool _isScanning = false;
@@ -101,6 +98,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initDatabase();
     _checkNFCAvailability();
     _pulseController = AnimationController(
@@ -113,7 +111,15 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      AppAuth.lock();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     super.dispose();
   }
@@ -124,7 +130,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
 
     _database = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE cards (
@@ -134,7 +140,8 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
             tagType TEXT NOT NULL,
             content TEXT,
             timestamp INTEGER NOT NULL,
-            color INTEGER NOT NULL DEFAULT 7
+            color INTEGER NOT NULL DEFAULT 7,
+            ${kCardDetailColumns.join(',\n            ')}
           )
         ''');
       },
@@ -142,6 +149,12 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         if (oldVersion < 2) {
           await db.execute(
               'ALTER TABLE cards ADD COLUMN color INTEGER NOT NULL DEFAULT 7');
+        }
+        if (oldVersion < 3) {
+          // v1.2.0: payment details. Additive only, existing cards keep their data.
+          for (final column in kCardDetailColumns) {
+            await db.execute('ALTER TABLE cards ADD COLUMN $column');
+          }
         }
       },
     );
@@ -161,8 +174,10 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
     });
   }
 
-  Future<void> _saveCard(String uid, String tagType, String content) async {
-    if (_database == null) return;
+  /// Saves or refreshes a scanned card. Returns the card id and whether it is new.
+  Future<({String id, bool isNew})?> _saveCard(
+      String uid, String tagType, String content) async {
+    if (_database == null) return null;
 
     final existingCards = await _database!.query(
       'cards',
@@ -181,27 +196,110 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         whereArgs: [uid],
       );
       logger.i('Updated existing card with UID: $uid');
+      await _loadSavedCards();
+      return (id: existingCards.first['id'] as String, isNew: false);
     } else {
       final nextNumber = _savedCards.length + 1;
       final cardName = 'Card $nextNumber';
-      final colorIndex = _savedCards.length % kCardColors.length;
+      // A random colour no other card uses (hue kept far from existing ones).
+      final colorValue =
+          pickDistinctCardColor(_savedCards.map((c) => c.colorValue));
+      final id = const Uuid().v4();
 
       await _database!.insert(
         'cards',
         {
-          'id': const Uuid().v4(),
+          'id': id,
           'uid': uid,
           'name': cardName,
           'tagType': tagType,
           'content': content,
           'timestamp': DateTime.now().millisecondsSinceEpoch,
-          'color': colorIndex,
+          'color': colorValue,
         },
       );
       logger.i('Saved new card: $cardName with UID: $uid');
+      await _loadSavedCards();
+      return (id: id, isNew: true);
     }
+  }
 
+  /// Opens the payment-details editor. Existing secrets need fingerprint/passcode.
+  Future<void> _openCardDetails(NFCCard card, {bool scanOnOpen = false}) async {
+    var initial = CardDetails(
+      holder: card.holder ?? '',
+      scheme: CardScheme.fromName(card.scheme),
+      product: CardProduct.fromName(card.product),
+      issuer: card.issuer ?? '',
+      expiry: card.expiry ?? '',
+    );
+    if (card.panEnc != null || card.cvvEnc != null) {
+      final outcome = await AppAuth.unlock('Unlock to view ${card.name}');
+      if (!mounted) return;
+      if (outcome != AuthOutcome.success) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(outcome == AuthOutcome.unavailable
+              ? 'Set a screen lock (PIN, pattern or fingerprint) in Android settings to view saved card numbers.'
+              : 'Not unlocked. Card details stay hidden.'),
+        ));
+        return;
+      }
+      try {
+        initial = CardDetails(
+          number: card.panEnc == null ? '' : await _vault.decrypt(card.panEnc!),
+          cvv: card.cvvEnc == null ? '' : await _vault.decrypt(card.cvvEnc!),
+          holder: initial.holder,
+          scheme: initial.scheme,
+          product: initial.product,
+          issuer: initial.issuer,
+          expiry: initial.expiry,
+        );
+      } catch (e) {
+        logger.e('Could not decrypt card details: $e');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Saved card number could not be decrypted on this device. Enter it again.'),
+        ));
+      }
+    }
+    if (!mounted) return;
+    final result = await Navigator.of(context).push<CardDetails>(MaterialPageRoute(
+      builder: (_) => CardDetailsScreen(
+        cardName: card.name,
+        color: cardColorFromValue(card.colorValue),
+        initial: initial,
+        scanOnOpen: scanOnOpen,
+      ),
+    ));
+    if (result == null) return;
+    await _saveCardDetails(card, result);
+  }
+
+  Future<void> _saveCardDetails(NFCCard card, CardDetails d) async {
+    if (_database == null) return;
+    String? orNull(String v) => v.trim().isEmpty ? null : v.trim();
+    await _database!.update(
+      'cards',
+      {
+        'pan_enc': d.number.isEmpty ? null : await _vault.encrypt(d.number),
+        'last4': d.number.isEmpty ? null : last4Of(d.number),
+        'cvv_enc': d.cvv.isEmpty ? null : await _vault.encrypt(d.cvv),
+        'holder': orNull(d.holder),
+        'scheme': d.scheme == CardScheme.unknown ? null : d.scheme.name,
+        'product': d.product == CardProduct.unknown ? null : d.product.name,
+        'issuer': orNull(d.issuer),
+        'expiry': orNull(d.expiry),
+        'details_updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [card.id],
+    );
     await _loadSavedCards();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${card.name}: card details saved')),
+      );
+    }
   }
 
   Future<void> _deleteCard(String uid) async {
@@ -421,17 +519,16 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
 
   Future<void> _pickFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: [
           'jpg', 'jpeg', 'png', 'gif', 'pdf', 'txt', 'doc', 'docx'
         ],
-        allowMultiple: false,
       );
 
-      if (result != null) {
+      if (picked != null) {
         setState(() {
-          _selectedFile = result.files.first;
+          _selectedFile = picked;
           _fileSendStatus = 'File selected: ${_selectedFile!.name}';
         });
       }
@@ -449,18 +546,12 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         _fileSendStatus = 'Preparing file for sending...';
       });
 
-      Uint8List fileData;
-      if (_selectedFile!.bytes != null) {
-        fileData = _selectedFile!.bytes!;
-      } else if (_selectedFile!.path != null) {
-        fileData = await File(_selectedFile!.path!).readAsBytes();
-      } else {
-        throw Exception('Unable to read file data');
-      }
+      // file_picker 13: content is read through the XFile, not a bytes field.
+      final Uint8List fileData = await _selectedFile!.xFile.readAsBytes();
 
       final fileMetadata = {
         'name': _selectedFile!.name,
-        'size': _selectedFile!.size,
+        'size': fileData.length,
         'extension': _selectedFile!.extension,
         'type': 'nfc_wallet_file',
         'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -1065,10 +1156,25 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
       }
 
       if (uid.isNotEmpty) {
-        await _saveCard(uid, tagType, content);
+        final saved = await _saveCard(uid, tagType, content);
         setState(() {
           _scanResult = 'Card saved!\nUID: $uid\nType: $tagType';
         });
+        if (saved != null && mounted) {
+          final card = _savedCards.where((c) => c.id == saved.id).firstOrNull;
+          if (card != null && !card.hasPaymentDetails) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              duration: const Duration(seconds: 8),
+              content: Text(saved.isNew
+                  ? '${card.name} saved. Add the card number, expiry and CVV?'
+                  : '${card.name} updated. Add its card details?'),
+              action: SnackBarAction(
+                label: 'Scan card',
+                onPressed: () => _openCardDetails(card, scanOnOpen: true),
+              ),
+            ));
+          }
+        }
       } else {
         setState(() {
           _scanResult = 'Scanned — no UID\nType: $tagType';
@@ -1462,147 +1568,33 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
   }
 
   Widget _buildWalletStack(bool isDark) {
-    final cards = _savedCards;
-    const double cardHeight = 200.0;
-    const double stackOffset = 28.0;
-    final totalHeight =
-        cardHeight + (cards.length - 1) * stackOffset + 32.0;
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
-      child: SizedBox(
-        height: totalHeight,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: List.generate(cards.length, (i) {
-            final card = cards[cards.length - 1 - i];
-            final topOffset = i * stackOffset;
-            final isTop = i == cards.length - 1;
-            return Positioned(
-              top: topOffset,
-              left: 0,
-              right: 0,
-              child: GestureDetector(
-                onTap: () {
-                  if (isTop) {
-                    _showCardBottomSheet(card);
-                  } else {
-                    setState(() {
-                      _savedCards.remove(card);
-                      _savedCards.insert(0, card);
-                    });
-                  }
-                },
-                child: _buildWalletCard(card, isTop: isTop),
-              ),
-            );
-          }),
-        ),
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+      child: WalletCardStack<NFCCard>(
+        items: _savedCards,
+        idOf: (c) => c.id,
+        peek: WalletCardFace.headerHeight,
+        faceBuilder: (context, card, focused) =>
+            _buildWalletCard(card, isTop: focused),
+        onOpen: _showCardBottomSheet,
       ),
     );
   }
 
   Widget _buildWalletCard(NFCCard card, {bool isTop = false}) {
-    final cardColor =
-        kCardColors[card.colorIndex % kCardColors.length];
-    final darkerColor = HSLColor.fromColor(cardColor)
-        .withLightness(
-            (HSLColor.fromColor(cardColor).lightness - 0.12)
-                .clamp(0.0, 1.0))
-        .toColor();
-
-    final initials = card.name.trim().isEmpty
-        ? '?'
-        : card.name
-            .trim()
-            .split(' ')
-            .map((w) => w.isNotEmpty ? w[0] : '')
-            .take(2)
-            .join()
-            .toUpperCase();
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-      height: 200,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          colors: [cardColor, darkerColor],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: isTop
-            ? [
-                BoxShadow(
-                  color: cardColor.withValues(alpha: 0.45),
-                  blurRadius: 24,
-                  offset: const Offset(0, 10),
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.18),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(22),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                // Avatar circle
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.25),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.5),
-                        width: 1.5),
-                  ),
-                  child: Center(
-                    child: Text(
-                      initials,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                const Icon(LucideIcons.nfc,
-                    color: Colors.white60, size: 22),
-              ],
-            ),
-            const Spacer(),
-            Text(
-              card.name,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.3,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              card.tagType,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return WalletCardFace(
+      title: card.name,
+      subtitle: card.issuer ??
+          (card.product != null
+              ? CardProduct.fromName(card.product).label
+              : null),
+      color: cardColorFromValue(card.colorValue),
+      last4: card.last4,
+      holder: card.holder,
+      expiry: card.expiry,
+      scheme: card.scheme == null ? null : CardScheme.fromName(card.scheme),
+      footnote: card.tagType,
+      elevated: isTop,
     );
   }
 
@@ -1703,6 +1695,10 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           } else {
             _startCardEmulation(card);
           }
+        },
+        onDetails: () {
+          Navigator.pop(context);
+          _openCardDetails(card);
         },
         onShare: () {
           Navigator.pop(context);
@@ -1859,6 +1855,23 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                 color: isDark ? Colors.white54 : Colors.black45,
               ),
             ),
+            if (card.hasPaymentDetails) ...[
+              const SizedBox(height: 8),
+              Text(
+                [
+                  if (card.issuer != null) card.issuer!,
+                  if (card.scheme != null) CardScheme.fromName(card.scheme).label,
+                  if (card.product != null) CardProduct.fromName(card.product).label,
+                  if (card.last4 != null) '•• ${card.last4}',
+                  if (card.expiry != null) 'exp ${card.expiry}',
+                ].join('  ·  '),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+            ],
             const SizedBox(height: 2),
             Text(
               'UID: ${card.uid}',
@@ -1884,6 +1897,14 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                       _startCardEmulation(card);
                     }
                   },
+                  isDark: isDark,
+                ),
+                const SizedBox(width: 10),
+                _actionChip(
+                  icon: LucideIcons.creditCard,
+                  label: 'Details',
+                  color: const Color(0xFF5856D6),
+                  onTap: () => _openCardDetails(card),
                   isDark: isDark,
                 ),
                 const SizedBox(width: 10),
@@ -2274,6 +2295,7 @@ class _CardBottomSheet extends StatefulWidget {
   final bool isEmulating;
   final NFCCard? emulatingCard;
   final VoidCallback onEmulate;
+  final VoidCallback onDetails;
   final VoidCallback onShare;
   final VoidCallback onEdit;
   final ValueChanged<int> onColorChange;
@@ -2284,6 +2306,7 @@ class _CardBottomSheet extends StatefulWidget {
     required this.isEmulating,
     required this.emulatingCard,
     required this.onEmulate,
+    required this.onDetails,
     required this.onShare,
     required this.onEdit,
     required this.onColorChange,
@@ -2297,16 +2320,24 @@ class _CardBottomSheet extends StatefulWidget {
 class _CardBottomSheetState extends State<_CardBottomSheet> {
   late int _selectedColorIndex;
 
+  /// The random colour the card was created with; kept selectable after picking a preset.
+  int? _ownColor;
+
   @override
   void initState() {
     super.initState();
-    _selectedColorIndex = widget.card.colorIndex % kCardColors.length;
+    // -1 = the card's own random colour (not one of the presets).
+    final v = widget.card.colorValue;
+    _selectedColorIndex = (v >= 0 && v < kCardColors.length) ? v : -1;
+    _ownColor = _selectedColorIndex < 0 ? v : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = kCardColors[_selectedColorIndex];
+    final cardColor = _selectedColorIndex >= 0
+        ? kCardColors[_selectedColorIndex]
+        : cardColorFromValue(_ownColor ?? widget.card.colorValue);
     final darkerColor = HSLColor.fromColor(cardColor)
         .withLightness(
             (HSLColor.fromColor(cardColor).lightness - 0.12).clamp(0.0, 1.0))
@@ -2466,13 +2497,17 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
             height: 44,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: kCardColors.length,
-              itemBuilder: (context, i) {
+              // The card's own random colour (if any) comes first, then the presets.
+              itemCount: kCardColors.length + (_ownColor != null ? 1 : 0),
+              itemBuilder: (context, item) {
+                final offset = _ownColor != null ? 1 : 0;
+                final i = item - offset; // -1 = own colour
+                final swatch = i < 0 ? cardColorFromValue(_ownColor!) : kCardColors[i];
                 final isSelected = i == _selectedColorIndex;
                 return GestureDetector(
                   onTap: () {
                     setState(() => _selectedColorIndex = i);
-                    widget.onColorChange(i);
+                    widget.onColorChange(i < 0 ? _ownColor! : i);
                   },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
@@ -2480,7 +2515,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
                     height: 44,
                     margin: const EdgeInsets.only(right: 12),
                     decoration: BoxDecoration(
-                      color: kCardColors[i],
+                      color: swatch,
                       shape: BoxShape.circle,
                       border: isSelected
                           ? Border.all(
@@ -2490,7 +2525,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
                           : null,
                       boxShadow: [
                         BoxShadow(
-                          color: kCardColors[i].withValues(alpha: 0.4),
+                          color: swatch.withValues(alpha: 0.4),
                           blurRadius: 6,
                           offset: const Offset(0, 2),
                         ),
@@ -2507,6 +2542,21 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
           ),
 
           const SizedBox(height: 24),
+
+          // Payment details (number, expiry, CVV…)
+          SizedBox(
+            width: double.infinity,
+            child: _SheetButton(
+              icon: LucideIcons.creditCard,
+              label: widget.card.hasPaymentDetails
+                  ? 'Card details  ·  •• ${widget.card.last4 ?? ''}'
+                  : 'Add card details (scan or type)',
+              backgroundColor: const Color(0xFF007AFF),
+              textColor: Colors.white,
+              onTap: widget.onDetails,
+            ),
+          ),
+          const SizedBox(height: 10),
 
           // Action buttons row
           Row(
@@ -2606,6 +2656,20 @@ class _SheetButton extends StatelessWidget {
 // NFC CARD MODEL
 // ─────────────────────────────────────────────────────────────────
 
+/// DB v3 columns for payment details. `pan_enc` / `cvv_enc` hold AES-GCM tokens
+/// from [VaultCrypto]; `last4` and the rest stay readable for lists and search.
+const List<String> kCardDetailColumns = [
+  'pan_enc TEXT',
+  'last4 TEXT',
+  'cvv_enc TEXT',
+  'holder TEXT',
+  'scheme TEXT',
+  'product TEXT',
+  'issuer TEXT',
+  'expiry TEXT',
+  'details_updated_at INTEGER',
+];
+
 class NFCCard {
   final String id;
   final String uid;
@@ -2613,7 +2677,18 @@ class NFCCard {
   final String tagType;
   final String? content;
   final DateTime timestamp;
-  final int colorIndex;
+
+  /// Preset index (0..7, legacy) or an ARGB colour. See [cardColorFromValue].
+  final int colorValue;
+
+  final String? panEnc;
+  final String? last4;
+  final String? cvvEnc;
+  final String? holder;
+  final String? scheme;
+  final String? product;
+  final String? issuer;
+  final String? expiry;
 
   NFCCard({
     required this.id,
@@ -2622,8 +2697,19 @@ class NFCCard {
     required this.tagType,
     this.content,
     required this.timestamp,
-    this.colorIndex = 7,
+    this.colorValue = 7,
+    this.panEnc,
+    this.last4,
+    this.cvvEnc,
+    this.holder,
+    this.scheme,
+    this.product,
+    this.issuer,
+    this.expiry,
   });
+
+  bool get hasPaymentDetails =>
+      panEnc != null || cvvEnc != null || holder != null || expiry != null || issuer != null;
 
   factory NFCCard.fromMap(Map<String, dynamic> map) {
     return NFCCard(
@@ -2634,7 +2720,15 @@ class NFCCard {
       content: map['content'] as String?,
       timestamp:
           DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
-      colorIndex: (map['color'] as int?) ?? 7,
+      colorValue: (map['color'] as int?) ?? 7,
+      panEnc: map['pan_enc'] as String?,
+      last4: map['last4'] as String?,
+      cvvEnc: map['cvv_enc'] as String?,
+      holder: map['holder'] as String?,
+      scheme: map['scheme'] as String?,
+      product: map['product'] as String?,
+      issuer: map['issuer'] as String?,
+      expiry: map['expiry'] as String?,
     );
   }
 
@@ -2646,7 +2740,15 @@ class NFCCard {
       'tagType': tagType,
       'content': content,
       'timestamp': timestamp.millisecondsSinceEpoch,
-      'color': colorIndex,
+      'color': colorValue,
+      'pan_enc': panEnc,
+      'last4': last4,
+      'cvv_enc': cvvEnc,
+      'holder': holder,
+      'scheme': scheme,
+      'product': product,
+      'issuer': issuer,
+      'expiry': expiry,
     };
   }
 }

@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # Release rule: build number = major*1000000 + minor*1000 + patch (1.1.0 -> 1001000).
 # It must always increase so a new APK installs over the old one and keeps the data.
 # tool/build_release.ps1 and the release workflow check this and the git tag.
-version: 1.1.0+1001000
+version: 1.2.0+1002000
 
 environment:
   sdk: ^3.11.3
@@ -48,12 +48,17 @@ dependencies:
   uuid: ^4.0.0
   
   # File Picker
-  file_picker: ^8.0.0
+  file_picker: 13.1.0
   permission_handler: ^11.3.1
   
   # Logging
   logger: ^1.4.0
   lucide_icons_flutter: 3.1.25
+  google_mlkit_text_recognition: 0.17.1
+  image_picker: 1.2.4
+  local_auth: 3.0.2
+  flutter_secure_storage: 11.2.0
+  cryptography: 2.9.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

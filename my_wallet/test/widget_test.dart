@@ -11,7 +11,7 @@ void main() {
       tagType: 'NFC Type A',
       content: 'U: 0068747470',
       timestamp: DateTime.fromMillisecondsSinceEpoch(1700000000000),
-      colorIndex: 3,
+      colorValue: 3,
     );
 
     final copy = NFCCard.fromMap(card.toMap());
@@ -22,7 +22,7 @@ void main() {
     expect(copy.tagType, card.tagType);
     expect(copy.content, card.content);
     expect(copy.timestamp, card.timestamp);
-    expect(copy.colorIndex, card.colorIndex);
+    expect(copy.colorValue, card.colorValue);
   });
 
   test('NFCCard defaults to the dark colour when the column is missing', () {
@@ -35,6 +35,6 @@ void main() {
       'timestamp': 0,
     });
 
-    expect(card.colorIndex, 7);
+    expect(card.colorValue, 7);
   });
 }

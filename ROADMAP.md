@@ -16,6 +16,12 @@ chip CCCD (citizen ID) and e-passports.
 | Security | No app lock, no `FLAG_SECURE`, `allowBackup` defaults to true, HCE `requireDeviceUnlock=false`, `MANAGE_EXTERNAL_STORAGE` requested (the Play Store will reject it). |
 | Release | v1.1.0: `applicationId = com.phamtuanchip.mywallet`, release key, versionCode from the version name, one universal APK per tag (see README). |
 
+Done in v1.2.0: card details per card (number, cardholder, network, debit/credit, bank, expiry, CVV),
+camera / photo scan with on-device ML Kit OCR, number + CVV encrypted with AES-256-GCM (key in Android
+Keystore) and unlocked with fingerprint/passcode, DB v3 migration (additive), Google Wallet-style stack
+(76 dp tap strip, tap to bring a card forward), a random never-used colour for every new card,
+backups disabled for card data.
+
 Fixed in v1.1: crash on devices without NFC (`CardEmulation.getInstance(null)`), broken
 `widget_test.dart`, removed the stale Java HCE service, final applicationId, new launcher icon (adaptive), Lucide icon set, release signing, tag-triggered GitHub release.
 
@@ -65,17 +71,21 @@ card_tag  (card_id, tag)        -- free tags such as "online", "travel"
 
 ### Phase 1: Secure bank-card vault MVP (≈2 weeks), **priority**
 - [ ] Design system + vault layout from section 6 (theme tokens, card stack, add sheet).
-- [ ] App lock (biometric / passcode) and auto-lock on background, `FLAG_SECURE`, no backup.
-- [ ] DB v3 migration to the model above, with encrypted PAN/CVV. Migrate existing `cards` rows in `onUpgrade`; updates must never lose data.
-- [ ] **Add card manually**: number with Luhn check and live scheme logo, expiry, CVV, holder, bank (auto from BIN, editable), product, tier, colour, notes.
+- [x] Fingerprint / passcode before showing saved number or CVV, 60 s grace, re-locks in background, no backup (v1.2.0).
+- [ ] Whole-app lock on launch, `FLAG_SECURE`.
+- [x] DB v3 migration with encrypted PAN/CVV, additive `onUpgrade` (v1.2.0).
+- [x] **Card details form**: number with Luhn check and live scheme logo, expiry, CVV, holder, bank (auto from BIN, editable), product (v1.2.0).
+- [ ] Add a card without NFC (manual only), tier, notes.
 - [ ] Vault list grouped by **bank / scheme / type**, search, filter chips, reorder.
-- [ ] Card detail: realistic card face (scheme logo, bank colour), reveal PAN/CVV with re-auth, copy with auto-clear.
+- [x] Card face with scheme mark, bank, last 4, holder, expiry/expired (v1.2.0).
+- [ ] Copy number with clipboard auto-clear.
 - [ ] Vietnamese UI strings (i18n with `intl`/ARB), dark mode.
-- [ ] Unit tests: Luhn, IIN → scheme, BIN → bank, crypto round-trip, DB migration.
+- [x] Unit tests: Luhn, IIN → scheme, BIN → bank, OCR parser, crypto round-trip, colours (v1.2.0).
+- [ ] DB migration test (v2 → v3 on a real SQLite file).
 
 ### Phase 2: Fast input (≈1–2 weeks)
 - [ ] **NFC EMV reader** (Android): read PAN + expiry and prefill the form; the user types the CVV. Handle Visa/Mastercard/JCB/NAPAS AIDs and cards that hide the PAN.
-- [ ] **Camera scan**: ML Kit on-device OCR, Luhn and expiry regex, confirm screen.
+- [x] **Camera scan**: ML Kit on-device OCR, Luhn and expiry parsing, review in the form (v1.2.0).
 - [ ] Duplicate detection (same PAN hash) offers an update instead of a new card.
 
 ### Phase 3: Polish & safety net (≈1 week)

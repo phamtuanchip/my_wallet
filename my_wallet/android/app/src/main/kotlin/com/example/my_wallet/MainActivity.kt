@@ -4,11 +4,12 @@ import android.content.SharedPreferences
 import android.nfc.NfcAdapter
 import android.nfc.cardemulation.CardEmulation
 import android.util.Log
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity: required by local_auth (BiometricPrompt).
+class MainActivity : FlutterFragmentActivity() {
     private val CHANNEL = "com.example.my_wallet/hce"
     private lateinit var sharedPreferences: SharedPreferences
     private var nfcAdapter: NfcAdapter? = null
