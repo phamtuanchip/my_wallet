@@ -1,3 +1,4 @@
+import '../access/lf_card_id.dart';
 import '../nfc/emrtd/mrz.dart';
 import 'id_document.dart';
 
@@ -42,6 +43,12 @@ Map<String, String> parseDocumentText(DocumentKind kind, List<String> lines, {Da
   if (mrz != null) fieldsFromMrz(mrz, kind).forEach(put);
 
   final text = lines.join('\n');
+
+  // Access cards: the printed 125 kHz ID; skip the generic number/date rules.
+  if (kind == DocumentKind.accessCard) {
+    findPrintedLfId(text)?.toFields().forEach(put);
+    return out;
+  }
 
   // Numbers: 12-digit personal number (CCCD, new licences), passport number.
   final id12 = RegExp(r'(?<!\d)(\d{12})(?!\d)').firstMatch(text.replaceAll(' ', ''));

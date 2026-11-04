@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../card/card_info.dart';
+import '../card/card_theme_art.dart';
+import '../card/zodiac.dart';
 import 'scheme_badge.dart';
+import 'zodiac_mark.dart';
+
+/// Keeps white text readable over bright artwork and the glitter sign.
+const List<Shadow> _kTextShadows = [Shadow(color: Color(0x73000000), blurRadius: 4, offset: Offset(0, 1))];
 
 /// The front of a card in the wallet. The top [WalletCardFace.headerHeight]
 /// pixels carry the identifying info (name, bank, scheme, last 4) because that
@@ -20,6 +26,8 @@ class WalletCardFace extends StatelessWidget {
     this.footnote,
     this.elevated = false,
     this.height = 200,
+    this.gradientColors,
+    this.themeArt,
   });
 
   static const double headerHeight = 76;
@@ -35,6 +43,14 @@ class WalletCardFace extends StatelessWidget {
   final bool elevated;
   final double height;
 
+  /// Multi-colour background (gradient presets); [color] is then its average,
+  /// used for the shadow and for the logo's contrast check.
+  final List<Color>? gradientColors;
+
+  /// Themed artwork (marble, Đông Sơn drum, seasons…), drawn over everything
+  /// else in the background.
+  final CardThemeArt? themeArt;
+
   @override
   Widget build(BuildContext context) {
     final hsl = HSLColor.fromColor(color);
@@ -43,6 +59,7 @@ class WalletCardFace extends StatelessWidget {
     const tabular = [FontFeature.tabularFigures()];
     final hasScheme = scheme != null && scheme != CardScheme.unknown;
     final expired = expiry != null && isExpired(expiry!);
+    final sign = ZodiacSign.fromExpiry(expiry);
 
     final semantic = [
       title,
@@ -50,6 +67,7 @@ class WalletCardFace extends StatelessWidget {
       if (hasScheme) scheme!.label,
       if (last4 != null && last4!.isNotEmpty) 'ending $last4',
       if (expired) 'expired',
+      if (sign != null) sign.label,
     ].join(', ');
 
     return Semantics(
@@ -62,7 +80,7 @@ class WalletCardFace extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
           gradient: LinearGradient(
-            colors: [lighter, darker],
+            colors: gradientColors ?? [lighter, darker],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -76,7 +94,15 @@ class WalletCardFace extends StatelessWidget {
           ],
         ),
         child: ExcludeSemantics(
-          child: Padding(
+          child: Stack(children: [
+          if (themeArt != null)
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: RepaintBoundary(child: CustomPaint(painter: CardThemePainter(themeArt!))),
+              ),
+            ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -97,6 +123,7 @@ class WalletCardFace extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
+                                shadows: _kTextShadows,
                                 color: Colors.white,
                                 fontSize: 17,
                                 fontWeight: FontWeight.w700,
@@ -112,6 +139,7 @@ class WalletCardFace extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
+                                shadows: _kTextShadows,
                                   color: Colors.white70,
                                   fontSize: 12.5,
                                   fontFeatures: tabular,
@@ -132,6 +160,7 @@ class WalletCardFace extends StatelessWidget {
                   Text(
                     '••••  ••••  ••••  $last4',
                     style: const TextStyle(
+                                shadows: _kTextShadows,
                       color: Colors.white,
                       fontSize: 19,
                       letterSpacing: 1.2,
@@ -148,7 +177,8 @@ class WalletCardFace extends StatelessWidget {
                           (holder == null || holder!.isEmpty) ? ' ' : holder!.toUpperCase(),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white, fontSize: 12.5, letterSpacing: 1),
+                          style: const TextStyle(
+                                shadows: _kTextShadows,color: Colors.white, fontSize: 12.5, letterSpacing: 1),
                         ),
                       ),
                       if (expiry != null && expiry!.isNotEmpty)
@@ -158,6 +188,7 @@ class WalletCardFace extends StatelessWidget {
                             Text(
                               expired ? 'EXPIRED' : 'VALID THRU',
                               style: TextStyle(
+                                shadows: _kTextShadows,
                                 color: expired ? const Color(0xFFFFD1D1) : Colors.white60,
                                 fontSize: 8.5,
                                 fontWeight: FontWeight.w700,
@@ -167,6 +198,7 @@ class WalletCardFace extends StatelessWidget {
                             Text(
                               expiry!,
                               style: const TextStyle(
+                                shadows: _kTextShadows,
                                 color: Colors.white,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -178,10 +210,20 @@ class WalletCardFace extends StatelessWidget {
                     ],
                   ),
                 ] else if (footnote != null)
-                  Text(footnote!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text(footnote!, style: const TextStyle(
+                                shadows: _kTextShadows,color: Colors.white70, fontSize: 12)),
               ],
             ),
           ),
+          // Zodiac sign of the expiry month with its English name, small in
+          // the corner under the header (the background now carries the theme).
+          if (sign != null)
+            Positioned(
+              right: 18,
+              top: headerHeight - 10,
+              child: ZodiacBadge(sign: sign, background: color, size: 36, animate: elevated),
+            ),
+        ]),
         ),
       ),
     );

@@ -10,8 +10,9 @@ sealed class DocumentScanOutcome {
 }
 
 class DocumentScanned extends DocumentScanOutcome {
-  const DocumentScanned(this.path);
-  final String path;
+  const DocumentScanned(this.paths);
+  final List<String> paths;
+  String get path => paths.first;
 }
 
 class DocumentScanCancelled extends DocumentScanOutcome {
@@ -23,20 +24,30 @@ class DocumentScanUnavailable extends DocumentScanOutcome {
 }
 
 /// Google's ML Kit Document Scanner (on-device, Play services): finds the
-/// card/page edges, crops and deskews it. One page per call.
-Future<DocumentScanOutcome> scanDocumentPage() async {
+/// card/page edges, crops and deskews it.
+///
+/// [full] mode is the "photo scan" experience: auto-capture, adjustable corners,
+/// rotate, filters and ML clean-up (shadows, stains, fingers). Its model is
+/// downloaded by Play services on first use. [pages] > 1 scans several pages
+/// (e.g. front and back) in one session; [gallery] lets the user import a photo
+/// inside the scanner so it is cropped too.
+Future<DocumentScanOutcome> scanDocumentPage({
+  int pages = 1,
+  bool full = false,
+  bool gallery = false,
+}) async {
   final scanner = DocumentScanner(
     options: DocumentScannerOptions(
       documentFormats: const {DocumentFormat.jpeg},
-      mode: ScannerMode.filter, // crop + deskew + filters, no ML clean-up model download
-      pageLimit: 1,
-      isGalleryImport: false,
+      mode: full ? ScannerMode.full : ScannerMode.filter,
+      pageLimit: pages,
+      isGalleryImport: gallery,
     ),
   );
   try {
     final result = await scanner.scanDocument();
     final images = result.images ?? const [];
-    return images.isEmpty ? const DocumentScanCancelled() : DocumentScanned(images.first);
+    return images.isEmpty ? const DocumentScanCancelled() : DocumentScanned(images);
   } on PlatformException catch (e) {
     if ((e.message ?? '').toLowerCase().contains('cancel')) return const DocumentScanCancelled();
     return const DocumentScanUnavailable();

@@ -15,59 +15,81 @@ class CapturedSide {
   final List<String> lines;
 }
 
-/// Takes a photo of a document side (Document Scanner → crop + deskew, plain
-/// camera as fallback, or the gallery) and reads its text on-device.
+/// "Photo scan" capture for documents: ML Kit Document Scanner in full mode
+/// (auto edge detection, adjustable corners, rotate, filters, shadow/finger
+/// clean-up), plain camera / gallery as fallback, then on-device OCR.
 /// Temporary files are deleted; only the returned bytes remain, in memory.
 class DocumentCapture {
   DocumentCapture({ImagePicker? picker}) : _picker = picker ?? ImagePicker();
 
   final ImagePicker _picker;
 
-  /// Null when the user cancels.
-  Future<CapturedSide?> capture({bool fromGallery = false}) async {
+  /// Longest side kept: cards stay sharp at 1800 px; A4/A5 papers need more
+  /// for small print to stay readable when zoomed or printed.
+  static int maxSideFor({required bool largeFormat}) => largeFormat ? 3000 : 1800;
+
+  /// One side. With [fromGallery] the photo is picked from the gallery and,
+  /// when the scanner is available, cropped by it. Null when cancelled.
+  Future<CapturedSide?> capture({bool fromGallery = false, bool largeFormat = false}) async {
+    final sides = await _run(pages: 1, fromGallery: fromGallery, largeFormat: largeFormat);
+    return sides == null || sides.isEmpty ? null : sides.first;
+  }
+
+  /// Front and back in one scanner session (first page = front). Null when
+  /// cancelled; falls back to two plain camera shots without the scanner.
+  Future<List<CapturedSide>?> captureBothSides({bool largeFormat = false}) =>
+      _run(pages: 2, fromGallery: false, largeFormat: largeFormat);
+
+  Future<List<CapturedSide>?> _run({required int pages, required bool fromGallery, required bool largeFormat}) async {
     final temp = <String>[];
     try {
-      String? path;
-      if (fromGallery) {
-        path = (await _picker.pickImage(source: ImageSource.gallery, requestFullMetadata: false))?.path;
-      } else {
-        switch (await scanDocumentPage()) {
-          case DocumentScanCancelled():
-            return null;
-          case DocumentScanned(path: final scanned):
-            path = scanned;
-          case DocumentScanUnavailable():
-            path = (await _picker.pickImage(
-              source: ImageSource.camera,
+      List<String> paths;
+      switch (await scanDocumentPage(pages: pages, full: true, gallery: fromGallery)) {
+        case DocumentScanCancelled():
+          return null;
+        case DocumentScanned(paths: final scanned):
+          paths = scanned;
+        case DocumentScanUnavailable():
+          paths = [];
+          for (var i = 0; i < pages; i++) {
+            final shot = await _picker.pickImage(
+              source: fromGallery ? ImageSource.gallery : ImageSource.camera,
               preferredCameraDevice: CameraDevice.rear,
-              maxWidth: 2200,
               requestFullMetadata: false,
-            ))
-                ?.path;
-        }
+            );
+            if (shot == null) break;
+            paths.add(shot.path);
+          }
+          if (paths.isEmpty) return null;
       }
-      if (path == null) return null;
-      temp.add(path);
+      temp.addAll(paths);
 
-      final out = '${(await getTemporaryDirectory()).path}/doc_${DateTime.now().microsecondsSinceEpoch}.jpg';
-      final shrunk = await compute(_shrink, (path, out));
-      final usable = shrunk ?? path;
-      if (shrunk != null) temp.add(shrunk);
-
+      final dir = (await getTemporaryDirectory()).path;
+      final maxSide = maxSideFor(largeFormat: largeFormat);
       final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      List<String> lines;
       try {
-        final r = await recognizer.processImage(InputImage.fromFilePath(usable));
-        lines = [
-          for (final b in r.blocks)
-            for (final l in b.lines) l.text,
-        ];
-      } catch (_) {
-        lines = const [];
+        final out = <CapturedSide>[];
+        for (final path in paths) {
+          final target = '$dir/doc_${DateTime.now().microsecondsSinceEpoch}.jpg';
+          final shrunk = await compute(_shrink, (path, target, maxSide));
+          final usable = shrunk ?? path;
+          if (shrunk != null) temp.add(shrunk);
+          List<String> lines;
+          try {
+            final r = await recognizer.processImage(InputImage.fromFilePath(usable));
+            lines = [
+              for (final b in r.blocks)
+                for (final l in b.lines) l.text,
+            ];
+          } catch (_) {
+            lines = const [];
+          }
+          out.add(CapturedSide(await File(usable).readAsBytes(), lines));
+        }
+        return out;
       } finally {
         await recognizer.close();
       }
-      return CapturedSide(await File(usable).readAsBytes(), lines);
     } finally {
       for (final p in temp) {
         deleteIfAppTemp(p);
@@ -76,21 +98,20 @@ class DocumentCapture {
   }
 }
 
-/// Background isolate: fix orientation, cap at 1800 px, JPEG q88 (keeps text
-/// readable at ~300–600 KB instead of several MB).
-String? _shrink((String input, String out) args) {
-  final (input, out) = args;
+/// Background isolate: fix orientation, cap the longest side, JPEG q90.
+String? _shrink((String input, String out, int maxSide) args) {
+  final (input, out, maxSide) = args;
   try {
     var image = img.decodeImage(File(input).readAsBytesSync());
     if (image == null) return null;
     image = img.bakeOrientation(image);
     final longest = image.width > image.height ? image.width : image.height;
-    if (longest > 1800) {
+    if (longest > maxSide) {
       image = image.width >= image.height
-          ? img.copyResize(image, width: 1800)
-          : img.copyResize(image, height: 1800);
+          ? img.copyResize(image, width: maxSide, interpolation: img.Interpolation.cubic)
+          : img.copyResize(image, height: maxSide, interpolation: img.Interpolation.cubic);
     }
-    File(out).writeAsBytesSync(img.encodeJpg(image, quality: 88));
+    File(out).writeAsBytesSync(img.encodeJpg(image, quality: 90));
     return out;
   } catch (_) {
     return null;

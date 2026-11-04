@@ -10,6 +10,7 @@ IconData documentIcon(DocumentKind kind) => switch (kind) {
       DocumentKind.motoLicense => LucideIcons.bike,
       DocumentKind.vehicleRegistration => LucideIcons.fileText,
       DocumentKind.insurance => LucideIcons.shieldCheck,
+      DocumentKind.accessCard => LucideIcons.keyRound,
       DocumentKind.other => LucideIcons.file,
     };
 
@@ -68,7 +69,11 @@ Future<DocumentKind?> showDocumentKindPicker(
                     child: Icon(documentIcon(k), size: 20),
                   ),
                   title: Text(k.vnLabel),
-                  subtitle: Text(k.hasChip ? '${k.label} · read the chip over NFC' : '${k.label} · photos of front and back'),
+                  subtitle: Text(switch (k) {
+                    _ when k.hasChip => '${k.label} · read the chip over NFC',
+                    DocumentKind.accessCard => 'NFC (13.56 MHz), USB reader or printed number (125 kHz)',
+                    _ => '${k.label} · photos of front and back',
+                  }),
                   onTap: () => Navigator.pop(ctx, k),
                 ),
             ],

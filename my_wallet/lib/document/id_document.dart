@@ -11,6 +11,7 @@ enum DocumentKind {
   motoLicense('Motorbike licence', 'Bằng lái xe máy', Color(0xFFC0702E)),
   vehicleRegistration('Vehicle registration', 'Giấy đăng ký xe', Color(0xFF5A5FB5)),
   insurance('Vehicle insurance', 'Bảo hiểm xe', Color(0xFF2E8C8C)),
+  accessCard('Access card (elevator, door, parking)', 'Thẻ từ · thang máy, cửa', Color(0xFF6B7F2A)),
   other('Other document', 'Giấy tờ khác', Color(0xFF5B5B60));
 
   const DocumentKind(this.label, this.vnLabel, this.color, {this.hasChip = false});
@@ -19,6 +20,18 @@ enum DocumentKind {
   final String vnLabel;
   final Color color;
   final bool hasChip;
+
+  /// ID-1 card size (85.6 × 54 mm). Other kinds are papers or booklet pages:
+  /// kept at a higher resolution and shown in a page-shaped frame.
+  bool get isCardSized => switch (this) {
+        DocumentKind.cccd ||
+        DocumentKind.carLicense ||
+        DocumentKind.motoLicense ||
+        DocumentKind.vehicleRegistration ||
+        DocumentKind.accessCard =>
+          true,
+        DocumentKind.passport || DocumentKind.insurance || DocumentKind.other => false,
+      };
 
   static DocumentKind fromName(String? name) =>
       DocumentKind.values.where((k) => k.name == name).firstOrNull ?? DocumentKind.other;
@@ -73,6 +86,16 @@ enum DocumentKind {
             DocumentField.issueDate,
             DocumentField.expiry,
           ],
+        DocumentKind.accessCard => const [
+            DocumentField.building,
+            DocumentField.cardUse,
+            DocumentField.frequency,
+            DocumentField.chipType,
+            DocumentField.uid,
+            DocumentField.idDecimal,
+            DocumentField.wiegand26,
+            DocumentField.expiry,
+          ],
         DocumentKind.other => const [
             DocumentField.number,
             DocumentField.holder,
@@ -85,6 +108,7 @@ enum DocumentKind {
   DocumentField get numberField => switch (this) {
         DocumentKind.passport => DocumentField.passportNumber,
         DocumentKind.vehicleRegistration => DocumentField.plate,
+        DocumentKind.accessCard => DocumentField.uid,
         _ => DocumentField.number,
       };
 }
@@ -119,6 +143,16 @@ enum DocumentField {
   mother('mother', "Mother's name", 'Họ tên mẹ', FieldType.text),
   spouse('spouse', 'Spouse', 'Vợ/chồng', FieldType.text),
   oldIdNumber('oldIdNumber', 'Old ID (CMND)', 'Số CMND cũ', FieldType.number),
+  building('building', 'Building / place', 'Tòa nhà / nơi dùng', FieldType.text),
+  cardUse('cardUse', 'Used for', 'Dùng cho (thang máy, cửa, xe…)', FieldType.text),
+  frequency('frequency', 'Frequency', 'Tần số', FieldType.text),
+  chipType('chipType', 'Chip type', 'Loại chip', FieldType.text),
+  uid('uid', 'Card ID (hex)', 'Mã thẻ (hex)', FieldType.text),
+  idDecimal('idDecimal', 'ID, 10 digits', 'Số in trên thẻ', FieldType.number),
+  wiegand26('wiegand26', 'Wiegand 26 (facility,card)', 'Wiegand 26', FieldType.text),
+  sakAtqa('sakAtqa', 'SAK / ATQA', 'SAK / ATQA', FieldType.text),
+  keyCheck('keyCheck', 'Key check', 'Kiểm tra khóa', FieldType.text),
+  block0('block0', 'Block 0', 'Block 0', FieldType.text),
   notes('notes', 'Notes', 'Ghi chú', FieldType.multiline);
 
   const DocumentField(this.key, this.label, this.vnLabel, this.type);
@@ -197,7 +231,7 @@ class DocumentContent {
   String get number => fields[kind.numberField.key] ?? '';
 
   String get defaultTitle {
-    final name = fields['holder'] ?? fields['owner'] ?? '';
+    final name = fields['holder'] ?? fields['owner'] ?? fields['building'] ?? fields['cardUse'] ?? '';
     return name.isEmpty ? kind.label : '${kind.vnLabel} · $name';
   }
 }

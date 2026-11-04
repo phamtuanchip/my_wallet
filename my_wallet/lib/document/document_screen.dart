@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../access/access_read_sheets.dart';
 import '../nfc/emrtd/bac.dart';
 import '../nfc/emrtd/mrz.dart';
 import 'chip_read_sheet.dart';
 import 'document_capture.dart';
+import 'document_export.dart';
 import 'document_ocr.dart';
 import 'document_store.dart';
 import 'id_document.dart';
@@ -38,6 +40,7 @@ class DocumentScreen extends StatefulWidget {
 class _DocumentScreenState extends State<DocumentScreen> {
   late final DocumentContent _c = widget.initial;
   late final DocumentCapture _capture = widget.capture ?? DocumentCapture();
+  final DocumentExporter _exporter = DocumentExporter();
   final Map<String, TextEditingController> _ctrl = {};
   late final TextEditingController _title = TextEditingController(text: _c.title);
   bool _dirty = false;
@@ -101,30 +104,96 @@ class _DocumentScreenState extends State<DocumentScreen> {
 
   // ── Photos ────────────────────────────────────────────────────────────
 
+  bool get _largeFormat => !_kind.isCardSized;
+
   Future<void> _takePhoto(String side, {required bool fromGallery}) async {
     setState(() => _busySide = side);
     try {
-      final shot = await _capture.capture(fromGallery: fromGallery);
+      final shot = await _capture.capture(fromGallery: fromGallery, largeFormat: _largeFormat);
       if (shot == null || !mounted) return;
-      final found = parseDocumentText(_kind, shot.lines);
-      setState(() {
-        if (side == 'front') {
-          _c.front = shot.jpeg;
-        } else {
-          _c.back = shot.jpeg;
-        }
-        _dirty = true;
-      });
-      _applyFields(found);
-      final mrz = _kind.hasChip ? findMrz(shot.lines) : null;
-      if (mrz != null && mrz.checksOk) {
-        _applyFields(fieldsFromMrz(mrz, _kind), overwrite: true);
-        _snack('MRZ read: the chip key is ready. Tap "Read chip".');
-      } else if (found.isNotEmpty) {
-        _snack('Filled ${found.length} field${found.length == 1 ? '' : 's'} from the photo. Please check them.');
-      }
+      _applyShots({side: shot});
     } catch (e) {
       _snack('Could not take the photo (${e.runtimeType}).');
+    } finally {
+      if (mounted) setState(() => _busySide = null);
+    }
+  }
+
+  /// One scanner session for both sides: page 1 = front, page 2 = back.
+  Future<void> _scanBothSides() async {
+    setState(() => _busySide = 'both');
+    try {
+      final shots = await _capture.captureBothSides(largeFormat: _largeFormat);
+      if (shots == null || shots.isEmpty || !mounted) return;
+      _applyShots({'front': shots[0], if (shots.length > 1) 'back': shots[1]});
+    } catch (e) {
+      _snack('Could not scan (${e.runtimeType}).');
+    } finally {
+      if (mounted) setState(() => _busySide = null);
+    }
+  }
+
+  void _applyShots(Map<String, CapturedSide> shots) {
+    setState(() {
+      if (shots['front'] != null) _c.front = shots['front']!.jpeg;
+      if (shots['back'] != null) _c.back = shots['back']!.jpeg;
+      _dirty = true;
+    });
+    final lines = [for (final s in shots.values) ...s.lines];
+    final found = parseDocumentText(_kind, lines);
+    _applyFields(found);
+    final mrz = _kind.hasChip ? findMrz(lines) : null;
+    if (mrz != null && mrz.checksOk) {
+      _applyFields(fieldsFromMrz(mrz, _kind), overwrite: true);
+      _snack('MRZ read: the chip key is ready. Tap "Read chip".');
+    } else if (found.isNotEmpty) {
+      _snack('Filled ${found.length} field${found.length == 1 ? '' : 's'} from the photo. Please check them.');
+    }
+  }
+
+  // ── Export ────────────────────────────────────────────────────────────
+
+  Future<void> _export() async {
+    final format = await showModalBottomSheet<ExportFormat>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+            child: Text('Export to Download', style: Theme.of(ctx).textTheme.titleLarge),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text(
+              'Saved in Download/MyWallet. The exported copy is not encrypted: other apps with file access can open it.',
+              style: Theme.of(ctx).textTheme.bodySmall,
+            ),
+          ),
+          for (final f in ExportFormat.values)
+            ListTile(
+              leading: Icon(switch (f) {
+                ExportFormat.pdf => LucideIcons.fileText,
+                ExportFormat.combinedImage => LucideIcons.rows2,
+                ExportFormat.separateImages => LucideIcons.images,
+              }),
+              title: Text(f.label),
+              subtitle: Text(f.description),
+              onTap: () => Navigator.pop(ctx, f),
+            ),
+        ]),
+      ),
+    );
+    if (format == null || !mounted) return;
+    setState(() => _busySide = 'export');
+    try {
+      _c.title = _title.text;
+      final saved = await _exporter.export(_c, format);
+      if (!mounted) return;
+      HapticFeedback.lightImpact();
+      _snack(saved.length == 1 ? 'Saved to ${saved.first}' : 'Saved ${saved.length} files to Download/MyWallet');
+    } catch (e) {
+      _snack('Export failed (${e is PlatformException ? e.code : e.runtimeType}).');
     } finally {
       if (mounted) setState(() => _busySide = null);
     }
@@ -142,7 +211,7 @@ class _DocumentScreenState extends State<DocumentScreen> {
           ListTile(
               leading: const Icon(LucideIcons.scanLine),
               title: Text(has ? 'Retake with camera' : 'Take photo'),
-              subtitle: const Text('Auto-crops the document'),
+              subtitle: const Text('Scanner: auto edges, crop, rotate, filters'),
               onTap: () => Navigator.pop(ctx, 'camera')),
           ListTile(leading: const Icon(LucideIcons.image), title: const Text('Choose from gallery'), onTap: () => Navigator.pop(ctx, 'gallery')),
           if (has)
@@ -312,6 +381,14 @@ class _DocumentScreenState extends State<DocumentScreen> {
         appBar: AppBar(
           title: Text(widget.existing == null ? 'Add ${_kind.label.toLowerCase()}' : _kind.label),
           actions: [
+            if (_c.front != null || _c.back != null)
+              IconButton(
+                tooltip: 'Export PDF / image',
+                icon: _busySide == 'export'
+                    ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(LucideIcons.download),
+                onPressed: _busySide != null || _saving ? null : _export,
+              ),
             if (widget.existing != null)
               IconButton(tooltip: 'Delete', icon: const Icon(LucideIcons.trash2), onPressed: _saving ? null : _delete),
             Padding(
@@ -326,11 +403,20 @@ class _DocumentScreenState extends State<DocumentScreen> {
             Text(_kind.vnLabel, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: _kind.color)),
             const SizedBox(height: 12),
             if (_kind.hasChip) ...[_chipCard(scheme), const SizedBox(height: 16)],
-            Row(children: [
+            if (_kind == DocumentKind.accessCard) ...[_accessReaderCard(scheme), const SizedBox(height: 16)],
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Expanded(child: _photoTile('front', 'Front', 'Mặt trước', _c.front)),
               const SizedBox(width: 12),
               Expanded(child: _photoTile('back', 'Back', 'Mặt sau', _c.back)),
             ]),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _busySide != null ? null : _scanBothSides,
+              icon: _busySide == 'both'
+                  ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(LucideIcons.scanLine, size: 18),
+              label: const Text('Scan both sides · Quét 2 mặt'),
+            ),
             const SizedBox(height: 20),
             TextField(
               controller: _title,
@@ -427,7 +513,11 @@ class _DocumentScreenState extends State<DocumentScreen> {
         onTap: _busySide != null ? null : () => bytes == null ? _takePhoto(side, fromGallery: false) : _photoActions(side),
         onLongPress: _busySide != null ? null : () => _photoActions(side),
         child: AspectRatio(
-          aspectRatio: 1.586, // ID-1 card
+          aspectRatio: switch (_kind) {
+            _ when _kind.isCardSized => 1.586, // ID-1 card
+            DocumentKind.passport => 1.42, // ID-3 data page
+            _ => 0.707, // A4/A5 paper, portrait
+          },
           child: Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
@@ -437,18 +527,15 @@ class _DocumentScreenState extends State<DocumentScreen> {
             ),
             child: busy
                 ? const Center(child: CircularProgressIndicator())
-                : bytes != null
+                : bytes != null && !_kind.isCardSized
+                    ? Stack(fit: StackFit.expand, children: [
+                        Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+                        _sideBadge(label),
+                      ])
+                    : bytes != null
                     ? Stack(fit: StackFit.expand, children: [
                         Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true),
-                        Positioned(
-                          left: 6,
-                          bottom: 6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
-                            child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
-                          ),
-                        ),
+                        _sideBadge(label),
                       ])
                     : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                         Icon(LucideIcons.camera, color: scheme.onSurfaceVariant),
@@ -460,6 +547,78 @@ class _DocumentScreenState extends State<DocumentScreen> {
       ),
     );
   }
+
+  // ── Access cards ──────────────────────────────────────────────────────
+
+  Future<void> _readAccessNfc() async {
+    final info = await showNfcTagSheet(context);
+    if (info == null || !mounted) return;
+    _applyFields(info.toFields(), overwrite: true);
+    _snack('${info.chipType} · UID ${info.uid}');
+  }
+
+  Future<void> _readUsb() async {
+    final id = await showUsbReaderDialog(context);
+    if (id == null || !mounted) return;
+    _applyFields(id.toFields(), overwrite: true);
+    _snack('Card ${id.hex ?? ''} saved in the form.');
+  }
+
+  Widget _accessReaderCard(ColorScheme scheme) {
+    final freq = _c.fields['frequency'] ?? '';
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(LucideIcons.keyRound, size: 20, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(freq.isEmpty ? 'Read the card' : 'Card read · $freq',
+                  style: Theme.of(context).textTheme.titleSmall),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            'Most elevator, parking and door cards are 125 kHz, which phones cannot read. '
+            'Use a USB OTG reader, or photograph the card: the number printed on it (e.g. 0004335038 066,09662) is read. '
+            '13.56 MHz cards (MIFARE, smart locks) are read with the phone\'s NFC.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            FilledButton.tonalIcon(
+              onPressed: _busySide != null ? null : _readAccessNfc,
+              icon: const Icon(LucideIcons.nfc, size: 18),
+              label: const Text('NFC · 13.56 MHz'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: _busySide != null ? null : _readUsb,
+              icon: const Icon(LucideIcons.usb, size: 18),
+              label: const Text('USB reader · 125 kHz'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busySide != null ? null : () => _takePhoto('front', fromGallery: false),
+              icon: const Icon(LucideIcons.camera, size: 18),
+              label: const Text('Printed number'),
+            ),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  Widget _sideBadge(String label) => Positioned(
+        left: 6,
+        bottom: 6,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+          child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+        ),
+      );
 
   Widget _field(String key) {
     final f = DocumentField.fromKey(key);

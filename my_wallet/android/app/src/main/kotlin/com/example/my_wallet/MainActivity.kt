@@ -1,6 +1,13 @@
 package com.example.my_wallet
 
+import android.Manifest
+import android.content.ContentValues
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.nfc.NfcAdapter
 import android.nfc.cardemulation.CardEmulation
 import android.util.Log
@@ -17,6 +24,25 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Exports (PDF / JPEG of documents) into the public Download/MyWallet folder.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.phamtuanchip.mywallet/downloads")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "save") return@setMethodCallHandler result.notImplemented()
+                val name = call.argument<String>("name")
+                val mime = call.argument<String>("mime")
+                val bytes = call.argument<ByteArray>("bytes")
+                if (name == null || mime == null || bytes == null) {
+                    return@setMethodCallHandler result.error("INVALID_ARGUMENTS", "name, mime and bytes are required", null)
+                }
+                try {
+                    result.success(saveToDownloads(name, mime, bytes))
+                } catch (e: SecurityException) {
+                    result.error("PERMISSION", e.message, null)
+                } catch (e: Exception) {
+                    result.error("WRITE_FAILED", e.message, null)
+                }
+            }
 
         sharedPreferences = getSharedPreferences("hce_prefs", MODE_PRIVATE)
 
@@ -92,5 +118,49 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (e: Exception) {
             Log.e("MainActivity", "Error stopping HCE: ${e.message}")
         }
+    }
+
+    /** Returns the user-visible location, e.g. "Download/MyWallet/x.pdf". */
+    private fun saveToDownloads(name: String, mime: String, bytes: ByteArray): String {
+        val folder = "MyWallet"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Scoped storage: MediaStore, no permission needed. Android renames on a name clash.
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$folder")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("MediaStore insert failed")
+            try {
+                resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: throw IllegalStateException("Cannot open output stream")
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            }
+            return "${Environment.DIRECTORY_DOWNLOADS}/$folder/$name"
+        }
+        // Android 7–9: plain file + media scan; needs WRITE_EXTERNAL_STORAGE (asked by Dart).
+        if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("WRITE_EXTERNAL_STORAGE not granted")
+        }
+        @Suppress("DEPRECATION")
+        val dir = java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), folder)
+        dir.mkdirs()
+        var file = java.io.File(dir, name)
+        var n = 1
+        while (file.exists()) {
+            file = java.io.File(dir, name.substringBeforeLast('.') + " ($n)." + name.substringAfterLast('.'))
+            n++
+        }
+        file.writeBytes(bytes)
+        MediaScannerConnection.scanFile(this, arrayOf(file.absolutePath), arrayOf(mime), null)
+        return "${Environment.DIRECTORY_DOWNLOADS}/$folder/${file.name}"
     }
 }

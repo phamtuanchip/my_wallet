@@ -16,6 +16,7 @@ import 'package:my_wallet/utils/file_transfer_utils.dart';
 import 'package:my_wallet/card/card_color.dart';
 import 'package:my_wallet/card/card_details_screen.dart';
 import 'package:my_wallet/card/card_info.dart';
+import 'package:my_wallet/access/nfc_tag_info.dart';
 import 'package:my_wallet/document/document_screen.dart';
 import 'package:my_wallet/document/document_store.dart';
 import 'package:my_wallet/document/documents_view.dart';
@@ -26,6 +27,9 @@ import 'package:my_wallet/security/app_auth.dart';
 import 'package:my_wallet/security/vault_crypto.dart';
 import 'package:my_wallet/widgets/wallet_card_face.dart';
 import 'package:my_wallet/widgets/wallet_card_stack.dart';
+import 'package:my_wallet/widgets/zodiac_mark.dart';
+import 'package:my_wallet/card/card_theme_art.dart';
+import 'package:my_wallet/card/zodiac.dart';
 
 void main() {
   runApp(const MyApp());
@@ -118,6 +122,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ZodiacGlyphs.preload(); // card faces draw their gold sign from the first frame
     _initDatabase();
     _checkNFCAvailability();
     _pulseController = AnimationController(
@@ -216,13 +221,13 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
     if (kind != null) await _addDocument(kind);
   }
 
-  Future<void> _addDocument(DocumentKind kind, {bool chipDetected = false}) async {
+  Future<void> _addDocument(DocumentKind kind, {bool chipDetected = false, Map<String, String>? fields}) async {
     final store = _docStore;
     if (store == null || !mounted) return;
     final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(
       builder: (_) => DocumentScreen(
         store: store,
-        initial: DocumentContent(kind: kind),
+        initial: DocumentContent(kind: kind, fields: {...?fields}),
         chipDetected: chipDetected,
       ),
     ));
@@ -384,6 +389,8 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
       builder: (_) => CardDetailsScreen(
         cardName: card.name,
         color: cardColorFromValue(card.colorValue),
+        gradientColors: cardGradientFromValue(card.colorValue)?.colors,
+        themeArt: cardThemeFromValue(card.colorValue),
         initial: initial,
         scanOnOpen: scanOnOpen,
       ),
@@ -1362,6 +1369,17 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           isoDep != null &&
           await EmrtdReader.probe((apdu) => isoDep.transceive(data: apdu));
 
+      // Anything else (MIFARE, NTAG, DESFire…) is likely an access card: read
+      // its type and key check while it is still in the field.
+      NfcTagInfo? accessInfo;
+      if (emv == null && !isChipDocument && !_isReceivingFile) {
+        try {
+          accessInfo = await readNfcTagInfo(tag).timeout(const Duration(seconds: 6));
+        } catch (e) {
+          logger.w('Tag info read failed: ${e.runtimeType}');
+        }
+      }
+
       await NfcManager.instance.stopSession();
 
       if (emv != null) {
@@ -1439,7 +1457,15 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         });
         if (saved != null && mounted) {
           final card = _savedCards.where((c) => c.id == saved.id).firstOrNull;
-          if (card != null && !card.hasPaymentDetails) {
+          if (card != null && accessInfo != null && !card.hasPaymentDetails) {
+            final info = accessInfo;
+            _showCardPrompt(
+              card,
+              '${info.chipType} · UID ${info.uid}. Elevator, door or parking card? Save it to Documents.',
+              actionLabel: 'Save',
+              onAction: () => _addDocument(DocumentKind.accessCard, fields: info.toFields()),
+            );
+          } else if (card != null && !card.hasPaymentDetails) {
             _showCardPrompt(
               card,
               saved.isNew
@@ -1878,6 +1904,8 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
               ? CardProduct.fromName(card.product).label
               : null),
       color: cardColorFromValue(card.colorValue),
+      gradientColors: cardGradientFromValue(card.colorValue)?.colors,
+      themeArt: cardThemeFromValue(card.colorValue),
       last4: card.last4,
       holder: card.holder,
       expiry: card.expiry,
@@ -2607,7 +2635,9 @@ class _CardBottomSheet extends StatefulWidget {
 }
 
 class _CardBottomSheetState extends State<_CardBottomSheet> {
-  late int _selectedColorIndex;
+  /// Stored `color` value of the selection: preset index, own ARGB colour,
+  /// or a gradient ([kGradientBase] + index).
+  late int _value;
 
   /// The random colour the card was created with; kept selectable after picking a preset.
   int? _ownColor;
@@ -2615,24 +2645,113 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
   @override
   void initState() {
     super.initState();
-    // -1 = the card's own random colour (not one of the presets).
-    final v = widget.card.colorValue;
-    _selectedColorIndex = (v >= 0 && v < kCardColors.length) ? v : -1;
-    _ownColor = _selectedColorIndex < 0 ? v : null;
+    _value = widget.card.colorValue;
+    final isPreset = _value >= 0 && _value < kCardColors.length;
+    _ownColor = isPreset || cardGradientFromValue(_value) != null ? null : _value;
+  }
+
+  void _select(int value) {
+    setState(() => _value = value);
+    widget.onColorChange(value);
+  }
+
+  /// A small card-shaped preview of a theme, with its name and the card's sign.
+  Widget _themeSwatch(CardThemeArt theme, int value, ZodiacSign? sign, bool isDark) {
+    final isSelected = value == _value;
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: '${theme.name} (${theme.vnName})',
+      child: GestureDetector(
+        onTap: () => _select(value),
+        child: Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Column(children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 70,
+              height: 44,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(
+                  color: isSelected ? (isDark ? Colors.white : Colors.black87) : Colors.transparent,
+                  width: 2.5,
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(7),
+                child: Stack(fit: StackFit.expand, children: [
+                  CustomPaint(painter: CardThemePainter(theme)),
+                  if (sign != null) Center(child: ZodiacMark(sign: sign, background: theme.average, size: 26, opacity: 0.8)),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(theme.vnName,
+                style: TextStyle(fontSize: 10, color: isDark ? Colors.white60 : Colors.black54)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /// One round swatch (solid or gradient) with the card's zodiac sign on it,
+  /// so the gold can be judged against every background before choosing.
+  Widget _swatch({
+    required int value,
+    required List<Color> colors,
+    required ZodiacSign? sign,
+    required bool isDark,
+    required String label,
+  }) {
+    final isSelected = value == _value;
+    final base = colors.length == 1 ? colors.first : cardColorFromValue(value);
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: label,
+      child: GestureDetector(
+        onTap: () => _select(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 44,
+          height: 44,
+          margin: const EdgeInsets.only(right: 12),
+          decoration: BoxDecoration(
+            color: colors.length == 1 ? colors.first : null,
+            gradient: colors.length > 1
+                ? LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight)
+                : null,
+            shape: BoxShape.circle,
+            border: isSelected ? Border.all(color: isDark ? Colors.white : Colors.black87, width: 2.5) : null,
+            boxShadow: [
+              BoxShadow(color: base.withValues(alpha: 0.4), blurRadius: 6, offset: const Offset(0, 2)),
+            ],
+          ),
+          child: sign != null
+              ? Center(child: ZodiacMark(sign: sign, background: base, size: isSelected ? 26 : 22))
+              : isSelected
+                  ? const Icon(LucideIcons.check, color: Colors.white, size: 20)
+                  : null,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = _selectedColorIndex >= 0
-        ? kCardColors[_selectedColorIndex]
-        : cardColorFromValue(_ownColor ?? widget.card.colorValue);
+    final cardColor = cardColorFromValue(_value);
+    final gradient = cardGradientFromValue(_value);
+    final theme = cardThemeFromValue(_value);
     final darkerColor = HSLColor.fromColor(cardColor)
         .withLightness(
             (HSLColor.fromColor(cardColor).lightness - 0.12).clamp(0.0, 1.0))
         .toColor();
     final isThisEmulating =
         widget.isEmulating && widget.emulatingCard?.id == widget.card.id;
+    // Zodiac sign of the expiry month, previewed on the card and every swatch.
+    final sign = ZodiacSign.fromExpiry(widget.card.expiry);
 
     final initials = widget.card.name.trim().isEmpty
         ? '?'
@@ -2708,7 +2827,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               gradient: LinearGradient(
-                colors: [cardColor, darkerColor],
+                colors: gradient?.colors ?? [cardColor, darkerColor],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -2721,7 +2840,25 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
               ],
             ),
             padding: const EdgeInsets.all(20),
-            child: Column(
+            child: Stack(fit: StackFit.expand, clipBehavior: Clip.none, children: [
+            if (theme != null)
+              Positioned(
+                left: -20,
+                top: -20,
+                right: -20,
+                bottom: -20,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: CustomPaint(painter: CardThemePainter(theme)),
+                ),
+              ),
+            if (sign != null)
+              Positioned(
+                right: 0,
+                top: 50,
+                child: ZodiacBadge(sign: sign, background: cardColor, size: 36, animate: true),
+              ),
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -2763,6 +2900,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
                 ),
               ],
             ),
+            ]),
           ),
 
           const SizedBox(height: 24),
@@ -2791,42 +2929,57 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
               itemBuilder: (context, item) {
                 final offset = _ownColor != null ? 1 : 0;
                 final i = item - offset; // -1 = own colour
-                final swatch = i < 0 ? cardColorFromValue(_ownColor!) : kCardColors[i];
-                final isSelected = i == _selectedColorIndex;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() => _selectedColorIndex = i);
-                    widget.onColorChange(i < 0 ? _ownColor! : i);
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 44,
-                    height: 44,
-                    margin: const EdgeInsets.only(right: 12),
-                    decoration: BoxDecoration(
-                      color: swatch,
-                      shape: BoxShape.circle,
-                      border: isSelected
-                          ? Border.all(
-                              color:
-                                  isDark ? Colors.white : Colors.black87,
-                              width: 2.5)
-                          : null,
-                      boxShadow: [
-                        BoxShadow(
-                          color: swatch.withValues(alpha: 0.4),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: isSelected
-                        ? const Icon(LucideIcons.check,
-                            color: Colors.white, size: 20)
-                        : null,
-                  ),
+                final value = i < 0 ? _ownColor! : i;
+                return _swatch(
+                  value: value,
+                  colors: [cardColorFromValue(value)],
+                  sign: sign,
+                  isDark: isDark,
+                  label: i < 0 ? 'Own colour' : 'Colour ${i + 1}',
                 );
               },
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Gradient',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 44,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: kCardGradients.length,
+              itemBuilder: (context, i) => _swatch(
+                value: gradientValue(i),
+                colors: kCardGradients[i].colors,
+                sign: sign,
+                isDark: isDark,
+                label: kCardGradients[i].name,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Theme · Chủ đề',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 64,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: kCardThemes.length,
+              itemBuilder: (context, i) => _themeSwatch(kCardThemes[i], themeValue(i), sign, isDark),
             ),
           ),
 

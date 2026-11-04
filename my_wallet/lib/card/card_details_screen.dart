@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../widgets/wallet_card_face.dart';
+import 'card_theme_art.dart';
 import 'card_info.dart';
 import 'card_ocr_parser.dart';
 import 'card_scanner.dart';
@@ -36,6 +37,8 @@ class CardDetailsScreen extends StatefulWidget {
     super.key,
     required this.cardName,
     required this.color,
+    this.gradientColors,
+    this.themeArt,
     required this.initial,
     this.scanner,
     this.scanOnOpen = false,
@@ -43,6 +46,8 @@ class CardDetailsScreen extends StatefulWidget {
 
   final String cardName;
   final Color color;
+  final List<Color>? gradientColors;
+  final CardThemeArt? themeArt;
   final CardDetails initial;
   final CardScanner? scanner;
   final bool scanOnOpen;
@@ -218,6 +223,8 @@ class _CardDetailsScreenState extends State<CardDetailsScreen> {
                 title: widget.cardName,
                 subtitle: _issuer.text.isEmpty ? null : _issuer.text,
                 color: widget.color,
+                gradientColors: widget.gradientColors,
+                themeArt: widget.themeArt,
                 last4: digits.length >= 4 ? last4Of(digits) : null,
                 holder: _holder.text,
                 expiry: _expiry.text.length == 5 ? _expiry.text : null,

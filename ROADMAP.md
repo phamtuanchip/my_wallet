@@ -16,6 +16,38 @@ chip CCCD (citizen ID) and e-passports.
 | Security | No app lock, no `FLAG_SECURE`, `allowBackup` defaults to true, HCE `requireDeviceUnlock=false`, `MANAGE_EXTERNAL_STORAGE` requested (the Play Store will reject it). |
 | Release | v1.1.0: `applicationId = com.phamtuanchip.mywallet`, release key, versionCode from the version name, one universal APK per tag (see README). |
 
+Done in v1.9.0: **card themes**, drawn in code (no bitmaps, no licences): Black marble, Carbon, Holographic,
+Đông Sơn drum, Lotus, Bamboo, Spring blossom, Summer sea, Autumn leaves, Winter snow, picked in a third row of the
+colour sheet and stored as 2000 + index in `color`. The zodiac sign is now **glitter gold** (grains of glitter on
+bright honey-to-lemon gold, glow, bokeh, star flares) with its **English name**, small in the card's corner. A
+**tilt reflection**: the phone's accelerometer moves a band of light across the gold and flashes the glitter and
+stars, like turning a metal card under a lamp (auto sweep without a sensor; off with "Remove animations"; the
+sensor runs only while the front card is on screen).
+
+Done in v1.8.0: zodiac signs in **shiny gold** (metallic gradient + soft glow, a light sweep every ~4 s on
+the card in front, off with "Remove animations"; dark rim on light cards), drawn **big in the centre** of the
+card at 64 % of its height behind the text. **Gradient backgrounds**: 10 presets (Sunset, Ocean, Aurora, Rose
+gold, Royal, Emerald, Fire, Midnight, Peach, Galaxy) next to the solid colours, stored as 1000 + index in the
+existing `color` column (no migration).
+
+Done in v1.7.0: a **zodiac sign** on every card with an expiry (VALID THRU month → the sign covering most of
+that month: 01 Capricorn … 12 Sagittarius), on the card face, the card sheet preview and every colour swatch.
+Icons are Tabler Icons (MIT, bundled SVG). The colour is the opposite hue of the card, made lighter or darker
+until it reaches WCAG 4.5:1 contrast with the card.
+
+Done in v1.6.0: **access cards** (elevator, door/smart lock, parking, hotel) in Documents. 13.56 MHz cards
+are read with the phone's NFC: UID, chip family from SAK/ATQA, and for MIFARE Classic how many sectors still
+open with a default key (+ block 0). Tapping such a card from the Wallet scan offers "Save to Documents".
+125 kHz cards (EM4100/T5577/HID, most "thẻ từ") **cannot be read by any phone**: the ID comes from a USB OTG
+keyboard-type reader or from OCR of the number printed on the card (10-digit decimal and/or Wiegand-26
+`fff,ccccc`), converted to the EM4100 hex ID. Magnetic-stripe cards are photo + manual entry only.
+
+Done in v1.5.0: export a document to the phone's **Download/MyWallet** folder as a PDF (both sides on one
+A4 page, cards at real 85.6 × 54 mm size for printing), one combined JPEG, or one JPEG per side. Capture now
+works like a photo-scan app: ML Kit Document Scanner in full mode (auto edges, adjustable corners, rotate,
+filters, shadow/finger clean-up), "scan both sides" in one session, gallery import through the scanner, and
+papers (passport page, insurance, other) kept at up to 3000 px in a page-shaped frame.
+
 Done in v1.4.0: a **Documents** tab for personal papers. Tapping a card that is not a bank card but has
 the ICAO eMRTD chip asks "CCCD or passport?". The chip is read over NFC with BAC + 3DES secure messaging
 (own implementation on `pointycastle`, checked against the ICAO 9303-11 worked example): DG1 (MRZ),
@@ -111,7 +143,8 @@ card_tag  (card_id, tag)        -- free tags such as "online", "travel"
 - [ ] Play Store prep: privacy policy, Data safety form ("data not collected, stays on device"), AAB build in CI.
 
 ### Phase 4: Other card types (later)
-- [ ] **Access cards**: save UID/type/photo of the card. Note that real door emulation only works with readers that accept a custom AID; Mifare Classic UID cloning is not possible with HCE.
+- [x] **Access cards**: UID/type/key check over NFC (13.56 MHz), USB reader or printed number for 125 kHz, photos (v1.6.0). Door emulation is still not possible: readers check the UID / Crypto-1, which HCE cannot fake.
+- [ ] 125 kHz over Bluetooth (e.g. Chameleon Ultra) so no USB reader is needed.
 - [x] **CCCD (chip citizen ID)**: MRZ from the back by camera (or typed), BAC over NFC, DG1 + DG2 photo + DG13 Vietnamese personal data (v1.4.0).
 - [x] **E-passport**: same eMRTD flow with the MRZ from the photo page (v1.4.0).
 - [x] **Paper documents** (driving licences, vehicle registration, insurance, other): front/back photos, encrypted, OCR prefill (v1.4.0).
