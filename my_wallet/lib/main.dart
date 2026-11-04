@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:my_wallet/utils/file_transfer_utils.dart';
 
@@ -1133,11 +1134,11 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _navItem(0, Icons.wallet_outlined, Icons.wallet, 'Wallet', isDark),
+              _navItem(0, LucideIcons.wallet, LucideIcons.walletCards, 'Wallet', isDark),
               _navItem(
-                  1, Icons.credit_card_outlined, Icons.credit_card, 'Cards', isDark),
+                  1, LucideIcons.creditCard, LucideIcons.creditCard, 'Cards', isDark),
               _navItem(
-                  2, Icons.settings_outlined, Icons.settings, 'Settings', isDark),
+                  2, LucideIcons.settings, LucideIcons.settings, 'Settings', isDark),
             ],
           ),
         ),
@@ -1232,7 +1233,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                       borderRadius: BorderRadius.circular(18),
                     ),
                     child: Icon(
-                      _isScanning ? Icons.sensors : Icons.add,
+                      _isScanning ? LucideIcons.radioTower : LucideIcons.plus,
                       color: Colors.white,
                       size: 20,
                     ),
@@ -1297,7 +1298,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         children: [
           ScaleTransition(
             scale: _pulseAnimation,
-            child: const Icon(Icons.nfc,
+            child: const Icon(LucideIcons.nfc,
                 color: Color(0xFF34C759), size: 20),
           ),
           const SizedBox(width: 10),
@@ -1361,7 +1362,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         children: [
           ScaleTransition(
             scale: _pulseAnimation,
-            child: const Icon(Icons.nfc,
+            child: const Icon(LucideIcons.nfc,
                 color: Color(0xFF007AFF), size: 22),
           ),
           const SizedBox(width: 12),
@@ -1410,7 +1411,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         children: [
           ScaleTransition(
             scale: _pulseAnimation,
-            child: const Icon(Icons.ios_share,
+            child: const Icon(LucideIcons.share,
                 color: Color(0xFF5856D6), size: 22),
           ),
           const SizedBox(width: 12),
@@ -1577,7 +1578,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                   ),
                 ),
                 const Spacer(),
-                const Icon(Icons.nfc,
+                const Icon(LucideIcons.nfc,
                     color: Colors.white60, size: 22),
               ],
             ),
@@ -1610,7 +1611,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(
-          Icons.wallet_outlined,
+          LucideIcons.wallet,
           size: 72,
           color: isDark ? Colors.white24 : Colors.black12,
         ),
@@ -1665,7 +1666,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              _isScanning ? Icons.sensors : Icons.nfc,
+              _isScanning ? LucideIcons.radioTower : LucideIcons.nfc,
               color: Colors.white,
               size: 22,
             ),
@@ -1871,7 +1872,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
             Row(
               children: [
                 _actionChip(
-                  icon: isThisEmulating ? Icons.nfc : Icons.contactless,
+                  icon: isThisEmulating ? LucideIcons.nfc : LucideIcons.nfc,
                   label: isThisEmulating ? 'Stop' : 'Emulate',
                   color: isThisEmulating
                       ? const Color(0xFF34C759)
@@ -1887,7 +1888,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                 ),
                 const SizedBox(width: 10),
                 _actionChip(
-                  icon: Icons.ios_share,
+                  icon: LucideIcons.share,
                   label: 'Share',
                   color: const Color(0xFF007AFF),
                   onTap: () => _sendCardViaNFC(card),
@@ -1895,7 +1896,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                 ),
                 const SizedBox(width: 10),
                 _actionChip(
-                  icon: Icons.delete_outline,
+                  icon: LucideIcons.trash2,
                   label: 'Delete',
                   color: const Color(0xFFFF3B30),
                   onTap: () => _showDeleteConfirmation(card),
@@ -1967,7 +1968,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           isDark: isDark,
           children: [
             _settingsRow(
-              icon: Icons.nfc,
+              icon: LucideIcons.nfc,
               iconColor: const Color(0xFF007AFF),
               title: 'Scan NFC Card',
               subtitle: _scanResult,
@@ -2008,7 +2009,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           isDark: isDark,
           children: [
             _settingsRow(
-              icon: Icons.upload_file,
+              icon: LucideIcons.fileUp,
               iconColor: const Color(0xFFFF9500),
               title: 'Send File via NFC',
               subtitle: _isSendingFile
@@ -2082,7 +2083,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                 ),
               ),
             _settingsRow(
-              icon: Icons.download,
+              icon: LucideIcons.download,
               iconColor: const Color(0xFF34C759),
               title: 'Receive File via NFC',
               subtitle: _isReceivingFile
@@ -2136,14 +2137,14 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
           isDark: isDark,
           children: [
             _settingsRow(
-              icon: Icons.info_outline,
+              icon: LucideIcons.info,
               iconColor: const Color(0xFF007AFF),
               title: 'My Wallet',
               subtitle: 'NFC Business Card Wallet v1.0',
               isDark: isDark,
             ),
             _settingsRow(
-              icon: Icons.credit_card,
+              icon: LucideIcons.creditCard,
               iconColor: const Color(0xFF5856D6),
               title: 'Cards Stored',
               subtitle:
@@ -2427,7 +2428,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
                       ),
                     ),
                     const Spacer(),
-                    const Icon(Icons.nfc,
+                    const Icon(LucideIcons.nfc,
                         color: Colors.white60, size: 22),
                   ],
                 ),
@@ -2496,7 +2497,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
                       ],
                     ),
                     child: isSelected
-                        ? const Icon(Icons.check,
+                        ? const Icon(LucideIcons.check,
                             color: Colors.white, size: 20)
                         : null,
                   ),
@@ -2512,7 +2513,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
             children: [
               Expanded(
                 child: _SheetButton(
-                  icon: Icons.ios_share,
+                  icon: LucideIcons.share,
                   label: 'Share',
                   backgroundColor: isDark
                       ? const Color(0xFF2C2C2E)
@@ -2524,7 +2525,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
               const SizedBox(width: 10),
               Expanded(
                 child: _SheetButton(
-                  icon: Icons.edit_outlined,
+                  icon: LucideIcons.pencil,
                   label: 'Edit Name',
                   backgroundColor: isDark
                       ? const Color(0xFF2C2C2E)
@@ -2535,7 +2536,7 @@ class _CardBottomSheetState extends State<_CardBottomSheet> {
               ),
               const SizedBox(width: 10),
               _SheetButton(
-                icon: Icons.delete_outline,
+                icon: LucideIcons.trash2,
                 label: '',
                 backgroundColor:
                     const Color(0xFFFF3B30).withValues(alpha: 0.12),

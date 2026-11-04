@@ -21,7 +21,8 @@ class MainActivity : FlutterActivity() {
 
         // Initialize NFC components
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
-        cardEmulation = CardEmulation.getInstance(nfcAdapter)
+        // NfcAdapter is null on devices without NFC (and on emulators); getInstance(null) throws.
+        cardEmulation = nfcAdapter?.let { CardEmulation.getInstance(it) }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {

@@ -1,30 +1,40 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:nfc_wallet_app/main.dart';
+import 'package:my_wallet/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('NFCCard survives a toMap/fromMap round trip', () {
+    final card = NFCCard(
+      id: 'id-1',
+      uid: '04A1B2C3',
+      name: 'Card 1',
+      tagType: 'NFC Type A',
+      content: 'U: 0068747470',
+      timestamp: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+      colorIndex: 3,
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    final copy = NFCCard.fromMap(card.toMap());
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    expect(copy.id, card.id);
+    expect(copy.uid, card.uid);
+    expect(copy.name, card.name);
+    expect(copy.tagType, card.tagType);
+    expect(copy.content, card.content);
+    expect(copy.timestamp, card.timestamp);
+    expect(copy.colorIndex, card.colorIndex);
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('NFCCard defaults to the dark colour when the column is missing', () {
+    final card = NFCCard.fromMap({
+      'id': 'id-2',
+      'uid': 'AABB',
+      'name': 'Legacy',
+      'tagType': 'Mifare Classic 1K',
+      'content': null,
+      'timestamp': 0,
+    });
+
+    expect(card.colorIndex, 7);
   });
 }

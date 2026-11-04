@@ -1,0 +1,102 @@
+name: Release APK
+
+# Bump `version:` in my_wallet/pubspec.yaml, commit, then push the matching tag:
+#   git tag v1.2.0 && git push origin v1.2.0
+# Publishes one signed universal APK named my_wallet-<version>.apk as a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: my_wallet
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.8
+          cache: true
+
+      - name: Read and check version
+        id: ver
+        run: |
+          LINE=$(grep -E '^version:' pubspec.yaml)
+          NAME=$(echo "$LINE" | sed -E 's/^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+).*/\1/')
+          CODE=$(echo "$LINE" | sed -E 's/^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+).*/\2/')
+          IFS=. read -r MA MI PA <<< "$NAME"
+          EXPECTED=$((MA * 1000000 + MI * 1000 + PA))
+          if [[ "$CODE" != "$EXPECTED" ]]; then
+            echo "::error::pubspec build number for $NAME must be $EXPECTED, found $CODE"; exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            TAG_VER="${GITHUB_REF_NAME#v}"
+            if [[ "${TAG_VER%%-*}" != "$NAME" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match pubspec version $NAME"; exit 1
+            fi
+            NAME="$TAG_VER"   # keeps a -beta.1 suffix in the file name
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Restore signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+              # A debug-signed APK cannot update an installed release build, so never publish one.
+              echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing"; exit 1
+            fi
+            echo "::warning::No signing secrets - manual run is signed with the debug key"
+            exit 0
+          fi
+          mkdir -p android/keystore
+          echo "$KEYSTORE_BASE64" | base64 -d > android/keystore/release.jks
+          {
+            echo "storeFile=../keystore/release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+
+      - name: Build universal APK
+        run: |
+          flutter build apk --release
+          mkdir -p dist
+          APK="my_wallet-${{ steps.ver.outputs.name }}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/$APK"
+          (cd dist && sha256sum "$APK" > "$APK.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: my_wallet-${{ steps.ver.outputs.name }}
+          path: my_wallet/dist/*
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: my_wallet/dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
