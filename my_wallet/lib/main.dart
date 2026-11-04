@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nfc_manager/nfc_manager.dart';
+import 'package:nfc_manager/platform_tags.dart';
 import 'package:logger/logger.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
@@ -15,6 +16,12 @@ import 'package:my_wallet/utils/file_transfer_utils.dart';
 import 'package:my_wallet/card/card_color.dart';
 import 'package:my_wallet/card/card_details_screen.dart';
 import 'package:my_wallet/card/card_info.dart';
+import 'package:my_wallet/document/document_screen.dart';
+import 'package:my_wallet/document/document_store.dart';
+import 'package:my_wallet/document/documents_view.dart';
+import 'package:my_wallet/document/id_document.dart';
+import 'package:my_wallet/nfc/emrtd/emrtd_reader.dart';
+import 'package:my_wallet/nfc/emv/emv_reader.dart';
 import 'package:my_wallet/security/app_auth.dart';
 import 'package:my_wallet/security/vault_crypto.dart';
 import 'package:my_wallet/widgets/wallet_card_face.dart';
@@ -66,11 +73,23 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   final VaultCrypto _vault = VaultCrypto(SecureVaultKeyStore());
 
+  /// Ignores tag discoveries that arrive while one is still being handled
+  /// (Android keeps reporting the card while it stays on the phone).
+  bool _handlingTag = false;
+
+  /// Card ids whose "add details" prompt was shown recently, to avoid repeats.
+  final Map<String, DateTime> _promptedAt = {};
+
   final logger = Logger();
   String _scanResult = 'Tap card to scan';
   bool _isScanning = false;
   List<NFCCard> _savedCards = [];
   Database? _database;
+
+  /// Personal documents (CCCD, passport, licences…), DB v5.
+  DocumentStore? _docStore;
+  List<IdDocument> _documents = [];
+  bool _documentsLoading = true;
   NFCCard? _emulatingCard;
   bool _isEmulating = false;
   bool _isSendingCard = false;
@@ -130,8 +149,9 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
 
     _database = await openDatabase(
       path,
-      version: 3,
+      version: 5,
       onCreate: (Database db, int version) async {
+        await db.execute(kDocumentsTableSql);
         await db.execute('''
           CREATE TABLE cards (
             id TEXT PRIMARY KEY,
@@ -141,7 +161,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
             content TEXT,
             timestamp INTEGER NOT NULL,
             color INTEGER NOT NULL DEFAULT 7,
-            ${kCardDetailColumns.join(',\n            ')}
+            ${[...kCardDetailColumns, ...kCardV4Columns].join(',\n            ')}
           )
         ''');
       },
@@ -156,10 +176,107 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
             await db.execute('ALTER TABLE cards ADD COLUMN $column');
           }
         }
+        if (oldVersion < 4) {
+          for (final column in kCardV4Columns) {
+            await db.execute('ALTER TABLE cards ADD COLUMN $column');
+          }
+        }
+        if (oldVersion < 5) {
+          // v1.4.0: personal documents in their own table.
+          await db.execute(kDocumentsTableSql);
+        }
       },
     );
 
+    _docStore = DocumentStore(_database!, _vault);
     await _loadSavedCards();
+    await _loadDocuments();
+  }
+
+  Future<void> _loadDocuments() async {
+    final store = _docStore;
+    if (store == null) return;
+    try {
+      final docs = await store.list();
+      if (mounted) setState(() => _documents = docs);
+    } catch (e) {
+      logger.e('Could not load documents: ${e.runtimeType}');
+    } finally {
+      if (mounted) setState(() => _documentsLoading = false);
+    }
+  }
+
+  /// "+" on the Wallet tab: NFC scan (auto-detects the card type) or a document.
+  Future<void> _showAddSheet() async {
+    final kind = await showDocumentKindPicker(
+      context,
+      title: 'Add to wallet',
+      onNfcScan: _startNFCSession,
+    );
+    if (kind != null) await _addDocument(kind);
+  }
+
+  Future<void> _addDocument(DocumentKind kind, {bool chipDetected = false}) async {
+    final store = _docStore;
+    if (store == null || !mounted) return;
+    final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => DocumentScreen(
+        store: store,
+        initial: DocumentContent(kind: kind),
+        chipDetected: chipDetected,
+      ),
+    ));
+    if (changed == true) {
+      await _loadDocuments();
+      if (mounted) setState(() => _selectedTabIndex = 3);
+    }
+  }
+
+  Future<void> _openDocument(IdDocument doc) async {
+    final store = _docStore;
+    if (store == null) return;
+    final outcome = await AppAuth.unlock('Unlock to view ${doc.title}');
+    if (!mounted) return;
+    if (outcome != AuthOutcome.success) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(outcome == AuthOutcome.unavailable
+            ? 'Set a screen lock (PIN, pattern or fingerprint) in Android settings to view saved documents.'
+            : 'Not unlocked. The document stays hidden.'),
+      ));
+      return;
+    }
+    final DocumentContent content;
+    try {
+      content = await store.open(doc);
+    } catch (e) {
+      logger.e('Could not decrypt document: ${e.runtimeType}');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('This document could not be decrypted on this device.'),
+      ));
+      return;
+    }
+    if (!mounted) return;
+    final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => DocumentScreen(store: store, initial: content, existing: doc),
+    ));
+    if (changed == true) await _loadDocuments();
+  }
+
+  /// A tapped card has the ICAO eMRTD application: ask which document it is.
+  Future<void> _onChipDocumentDetected() async {
+    setState(() {
+      _isScanning = false;
+      _scanResult = 'Chip ID document detected';
+    });
+    HapticFeedback.mediumImpact();
+    final kind = await showDocumentKindPicker(
+      context,
+      title: 'Chip document detected',
+      message: 'This is not a bank card. Which document is it?',
+      kinds: const [DocumentKind.cccd, DocumentKind.passport],
+    );
+    if (kind != null) await _addDocument(kind, chipDetected: true);
   }
 
   Future<void> _loadSavedCards() async {
@@ -289,6 +406,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         'product': d.product == CardProduct.unknown ? null : d.product.name,
         'issuer': orNull(d.issuer),
         'expiry': orNull(d.expiry),
+        'pan_fp': d.number.isEmpty ? null : await _vault.fingerprint(d.number),
         'details_updated_at': DateTime.now().millisecondsSinceEpoch,
       },
       where: 'id = ?',
@@ -300,6 +418,130 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         SnackBar(content: Text('${card.name}: card details saved')),
       );
     }
+  }
+
+  /// One prompt per card: clears queued snackbars (a swiped one must not be
+  /// replaced by a queued duplicate), auto-hides after 8 s, has a close button,
+  /// and is not shown again for the same card within 60 s.
+  void _showCardPrompt(NFCCard card, String message,
+      {required String actionLabel, required VoidCallback onAction}) {
+    if (!mounted) return;
+    final last = _promptedAt[card.id];
+    if (last != null && DateTime.now().difference(last) < const Duration(seconds: 60)) {
+      return;
+    }
+    _promptedAt[card.id] = DateTime.now();
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        duration: const Duration(seconds: 8),
+        // Flutter keeps snackbars with an action on screen unless persist is false.
+        persist: false,
+        showCloseIcon: true,
+        dismissDirection: DismissDirection.horizontal,
+        content: Text(message),
+        action: SnackBarAction(label: actionLabel, onPressed: onAction),
+      ));
+  }
+
+  /// Finds a saved card with this number: by fingerprint, or (cards saved
+  /// before v1.3.0) by last 4 + decrypting the stored number.
+  Future<NFCCard?> _findCardByPan(String pan, String fp) async {
+    for (final c in _savedCards) {
+      if (c.panFp == fp) return c;
+    }
+    final last4 = last4Of(pan);
+    for (final c in _savedCards) {
+      if (c.panFp != null || c.panEnc == null || c.last4 != last4) continue;
+      try {
+        if (await _vault.decrypt(c.panEnc!) == pan) return c;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  /// Saves what the chip revealed. Bank cards send a random UID on each tap,
+  /// so the card is identified by its number fingerprint instead.
+  Future<void> _saveEmvCard(EmvCardData emv) async {
+    if (_database == null) return;
+    final fp = await _vault.fingerprint(emv.pan);
+    final existing = await _findCardByPan(emv.pan, fp);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final scheme = emv.scheme == CardScheme.unknown ? null : emv.scheme.name;
+    final issuer = emv.issuer;
+    final productName = emv.product?.name;
+    final String cardId;
+    final bool isNew = existing == null;
+
+    if (existing != null) {
+      cardId = existing.id;
+      await _database!.update(
+        'cards',
+        {
+          // The chip is authoritative for number + expiry (e.g. after a renewal);
+          // keep what the user typed for the other fields.
+          'pan_enc': await _vault.encrypt(emv.pan),
+          'last4': last4Of(emv.pan),
+          'pan_fp': fp,
+          if (emv.expiry != null) 'expiry': emv.expiry,
+          if (existing.scheme == null && scheme != null) 'scheme': scheme,
+          if (existing.product == null && productName != null) 'product': productName,
+          if (existing.issuer == null && issuer != null) 'issuer': issuer,
+          if (existing.holder == null && emv.holder != null) 'holder': emv.holder,
+          'timestamp': now,
+          'details_updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [existing.id],
+      );
+    } else {
+      cardId = const Uuid().v4();
+      final label = emv.appLabel ?? emv.scheme.label;
+      final name = issuer != null && !label.toUpperCase().contains(issuer.toUpperCase())
+          ? '$issuer $label'
+          : label;
+      await _database!.insert('cards', {
+        'id': cardId,
+        // Stable, non-reversible id for the UNIQUE uid column.
+        'uid': 'emv-${fp.substring(0, 16)}',
+        'name': name,
+        'tagType': 'EMV contactless · ${emv.scheme.label}',
+        'content': '',
+        'timestamp': now,
+        'color': pickDistinctCardColor(_savedCards.map((c) => c.colorValue)),
+        'pan_enc': await _vault.encrypt(emv.pan),
+        'last4': last4Of(emv.pan),
+        'pan_fp': fp,
+        'expiry': emv.expiry,
+        'scheme': scheme,
+        'product': productName,
+        'issuer': issuer,
+        'holder': emv.holder,
+        'details_updated_at': now,
+      });
+    }
+    await _loadSavedCards();
+    if (!mounted) return;
+    final card = _savedCards.where((c) => c.id == cardId).firstOrNull;
+    if (card == null) return;
+    final summary = [
+      emv.scheme.label,
+      '•• ${last4Of(emv.pan)}',
+      if (emv.expiry != null) 'exp ${emv.expiry}',
+    ].join(' · ');
+    setState(() => _scanResult = isNew ? 'Card added from chip\n$summary' : 'Card updated from chip\n$summary');
+    final missing = [
+      if (card.holder == null) 'name',
+      if (card.cvvEnc == null) 'CVV',
+    ];
+    _showCardPrompt(
+      card,
+      missing.isEmpty
+          ? '${card.name} ${isNew ? 'added' : 'updated'} from the chip: $summary'
+          : 'Read from the chip: $summary. Add ${missing.join(' and ')}?',
+      actionLabel: missing.isEmpty ? 'View' : 'Add',
+      onAction: () => _openCardDetails(card, scanOnOpen: card.holder == null),
+    );
   }
 
   Future<void> _deleteCard(String uid) async {
@@ -1096,8 +1338,43 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
   }
 
   Future<void> _handleTagDiscovered(NfcTag tag) async {
+    if (_handlingTag) return;
+    _handlingTag = true;
     try {
+      // Payment cards: read number + expiry from the chip while the card is
+      // still in the field (must happen before stopSession).
+      EmvCardData? emv;
+      final isoDep = _isReceivingFile ? null : IsoDep.from(tag);
+      if (isoDep != null) {
+        setState(() => _scanResult = 'Reading card chip… keep the card still');
+        try {
+          emv = await EmvReader((apdu) => isoDep.transceive(data: apdu))
+              .read()
+              .timeout(const Duration(seconds: 8));
+        } catch (e) {
+          // Never log card data, only the failure kind.
+          logger.w('EMV read failed: ${e.runtimeType}');
+        }
+      }
+
+      // Not a bank card: is it a chip CCCD / passport (ICAO eMRTD applet)?
+      final isChipDocument = emv == null &&
+          isoDep != null &&
+          await EmrtdReader.probe((apdu) => isoDep.transceive(data: apdu));
+
       await NfcManager.instance.stopSession();
+
+      if (emv != null) {
+        HapticFeedback.mediumImpact();
+        await _saveEmvCard(emv);
+        setState(() => _isScanning = false);
+        return;
+      }
+
+      if (isChipDocument) {
+        await _onChipDocumentDetected();
+        return;
+      }
 
       if (_isReceivingFile) {
         await _handleFileReception(tag, autoStopSession: false);
@@ -1163,16 +1440,14 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         if (saved != null && mounted) {
           final card = _savedCards.where((c) => c.id == saved.id).firstOrNull;
           if (card != null && !card.hasPaymentDetails) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              duration: const Duration(seconds: 8),
-              content: Text(saved.isNew
+            _showCardPrompt(
+              card,
+              saved.isNew
                   ? '${card.name} saved. Add the card number, expiry and CVV?'
-                  : '${card.name} updated. Add its card details?'),
-              action: SnackBarAction(
-                label: 'Scan card',
-                onPressed: () => _openCardDetails(card, scanOnOpen: true),
-              ),
-            ));
+                  : '${card.name} updated. Add its card details?',
+              actionLabel: 'Scan card',
+              onAction: () => _openCardDetails(card, scanOnOpen: true),
+            );
           }
         }
       } else {
@@ -1183,11 +1458,13 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
 
       setState(() => _isScanning = false);
     } catch (e) {
-      logger.e('Error handling tag: $e');
+      logger.e('Error handling tag: ${e.runtimeType}');
       setState(() {
         _scanResult = 'Error: $e';
         _isScanning = false;
       });
+    } finally {
+      _handlingTag = false;
     }
   }
 
@@ -1243,6 +1520,8 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
               _navItem(0, LucideIcons.wallet, LucideIcons.walletCards, 'Wallet', isDark),
               _navItem(
                   1, LucideIcons.creditCard, LucideIcons.creditCard, 'Cards', isDark),
+              // Index 3 sits before Settings visually; Settings keeps index 2.
+              _navItem(3, LucideIcons.idCard, LucideIcons.idCard, 'Documents', isDark),
               _navItem(
                   2, LucideIcons.settings, LucideIcons.settings, 'Settings', isDark),
             ],
@@ -1259,7 +1538,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
       onTap: () => setState(() => _selectedTabIndex = index),
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 80,
+        width: 76,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1296,6 +1575,16 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
         return _buildCardsView();
       case 2:
         return _buildSettingsView();
+      case 3:
+        return DocumentsView(
+          documents: _documents,
+          loading: _documentsLoading,
+          onAdd: () async {
+            final kind = await showDocumentKindPicker(context);
+            if (kind != null) await _addDocument(kind);
+          },
+          onOpen: _openDocument,
+        );
       default:
         return _buildWalletView();
     }
@@ -1328,7 +1617,7 @@ class _NFCScannerScreenState extends State<NFCScannerScreen>
                           _isSendingFile ||
                           _isReceivingFile)
                       ? null
-                      : _startNFCSession,
+                      : _showAddSheet,
                   child: Container(
                     width: 36,
                     height: 36,
@@ -2658,6 +2947,9 @@ class _SheetButton extends StatelessWidget {
 
 /// DB v3 columns for payment details. `pan_enc` / `cvv_enc` hold AES-GCM tokens
 /// from [VaultCrypto]; `last4` and the rest stay readable for lists and search.
+/// DB v4 (v1.3.0): keyed HMAC of the card number, see [VaultCrypto.fingerprint].
+const List<String> kCardV4Columns = ['pan_fp TEXT'];
+
 const List<String> kCardDetailColumns = [
   'pan_enc TEXT',
   'last4 TEXT',
@@ -2689,6 +2981,7 @@ class NFCCard {
   final String? product;
   final String? issuer;
   final String? expiry;
+  final String? panFp;
 
   NFCCard({
     required this.id,
@@ -2706,6 +2999,7 @@ class NFCCard {
     this.product,
     this.issuer,
     this.expiry,
+    this.panFp,
   });
 
   bool get hasPaymentDetails =>
@@ -2729,6 +3023,7 @@ class NFCCard {
       product: map['product'] as String?,
       issuer: map['issuer'] as String?,
       expiry: map['expiry'] as String?,
+      panFp: map['pan_fp'] as String?,
     );
   }
 
@@ -2749,6 +3044,7 @@ class NFCCard {
       'product': product,
       'issuer': issuer,
       'expiry': expiry,
+      'pan_fp': panFp,
     };
   }
 }

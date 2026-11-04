@@ -29,6 +29,15 @@ void main() {
       expect(await VaultCrypto(store).decrypt(token), '987');
     });
 
+    test('fingerprint is stable per key and does not reveal the number', () async {
+      final store = MemoryVaultKeyStore();
+      final a = await VaultCrypto(store).fingerprint('4111111111111111');
+      expect(await VaultCrypto(store).fingerprint('4111111111111111'), a);
+      expect(await VaultCrypto(store).fingerprint('4111111111111112'), isNot(a));
+      expect(await VaultCrypto(MemoryVaultKeyStore()).fingerprint('4111111111111111'), isNot(a));
+      expect(a, isNot(contains('4111')));
+    });
+
     test('a different key cannot decrypt', () async {
       final token = await VaultCrypto(MemoryVaultKeyStore()).encrypt('987');
       expect(() => VaultCrypto(MemoryVaultKeyStore()).decrypt(token), throwsA(anything));

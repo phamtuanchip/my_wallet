@@ -16,6 +16,21 @@ chip CCCD (citizen ID) and e-passports.
 | Security | No app lock, no `FLAG_SECURE`, `allowBackup` defaults to true, HCE `requireDeviceUnlock=false`, `MANAGE_EXTERNAL_STORAGE` requested (the Play Store will reject it). |
 | Release | v1.1.0: `applicationId = com.phamtuanchip.mywallet`, release key, versionCode from the version name, one universal APK per tag (see README). |
 
+Done in v1.4.0: a **Documents** tab for personal papers. Tapping a card that is not a bank card but has
+the ICAO eMRTD chip asks "CCCD or passport?". The chip is read over NFC with BAC + 3DES secure messaging
+(own implementation on `pointycastle`, checked against the ICAO 9303-11 worked example): DG1 (MRZ),
+DG2 (face photo) and, for the CCCD, DG13 (name with diacritics, address, parents…, best effort). The BAC
+key comes from the MRZ on the back (camera OCR) or from the typed number + dates. Documents without a chip
+(car/motorbike licence, vehicle registration, insurance, other) are saved as front/back photos (Document
+Scanner crop + OCR prefill). Fields and photos are AES-256-GCM encrypted on the phone, opened only after
+fingerprint/passcode; DB v5 adds the `documents` table.
+
+Done in v1.3.0: card number + expiry (and name/label when the card exposes them) read from the
+chip over NFC (EMV: PPSE, SELECT, GPO, READ RECORD; read-only, zero amount), cards recognised again
+by a keyed fingerprint of the number (bank cards send a random UID per tap), camera scan through
+ML Kit Document Scanner (crop + deskew) with multi-pass OCR (original, grey + contrast, 180°)
+merged per field, one de-duplicated "add details" prompt that auto-hides and can be closed.
+
 Done in v1.2.0: card details per card (number, cardholder, network, debit/credit, bank, expiry, CVV),
 camera / photo scan with on-device ML Kit OCR, number + CVV encrypted with AES-256-GCM (key in Android
 Keystore) and unlocked with fingerprint/passcode, DB v3 migration (additive), Google Wallet-style stack
@@ -84,9 +99,10 @@ card_tag  (card_id, tag)        -- free tags such as "online", "travel"
 - [ ] DB migration test (v2 → v3 on a real SQLite file).
 
 ### Phase 2: Fast input (≈1–2 weeks)
-- [ ] **NFC EMV reader** (Android): read PAN + expiry and prefill the form; the user types the CVV. Handle Visa/Mastercard/JCB/NAPAS AIDs and cards that hide the PAN.
+- [x] **NFC EMV reader** (Android): PAN + expiry (+ name/label when present) saved encrypted; Visa/Mastercard/JCB/NAPAS/Amex/UnionPay/Discover AIDs, PPSE or AID fallback, GPO fallback to record scan (v1.3.0).
+- [ ] On-device Gemini Nano (ML Kit GenAI Prompt API) as an optional extra pass on supported phones only (Pixel 10, Galaxy S26…); not available on mid-range devices.
 - [x] **Camera scan**: ML Kit on-device OCR, Luhn and expiry parsing, review in the form (v1.2.0).
-- [ ] Duplicate detection (same PAN hash) offers an update instead of a new card.
+- [x] Duplicate detection by keyed PAN fingerprint: tapping a saved card updates it instead of adding a new one (v1.3.0).
 
 ### Phase 3: Polish & safety net (≈1 week)
 - [ ] Encrypted backup/restore file.
@@ -96,8 +112,11 @@ card_tag  (card_id, tag)        -- free tags such as "online", "travel"
 
 ### Phase 4: Other card types (later)
 - [ ] **Access cards**: save UID/type/photo of the card. Note that real door emulation only works with readers that accept a custom AID; Mifare Classic UID cloning is not possible with HCE.
-- [ ] **CCCD (chip citizen ID)**: ICAO 9303 eMRTD. Read the MRZ on the back with the camera, then BAC/PACE over NFC to read DG1 (data) + DG2 (photo) and verify the SOD signature (`dmrtd` package).
-- [ ] **E-passport**: same eMRTD flow with the MRZ from the photo page.
+- [x] **CCCD (chip citizen ID)**: MRZ from the back by camera (or typed), BAC over NFC, DG1 + DG2 photo + DG13 Vietnamese personal data (v1.4.0).
+- [x] **E-passport**: same eMRTD flow with the MRZ from the photo page (v1.4.0).
+- [x] **Paper documents** (driving licences, vehicle registration, insurance, other): front/back photos, encrypted, OCR prefill (v1.4.0).
+- [ ] eMRTD: **PACE** for chips that refuse BAC, **passive authentication** (SOD signature against the CSCA list), JPEG 2000 face photo decoding.
+- [ ] Expiry reminders for documents (licence, CCCD, insurance).
 - [ ] USB smart-card reader support (contact chip).
 - [ ] iOS build on a macOS CI runner (manual/camera input only for bank cards; eMRTD works on iOS with Core NFC).
 

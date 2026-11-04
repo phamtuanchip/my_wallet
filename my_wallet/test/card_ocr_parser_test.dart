@@ -72,6 +72,22 @@ void main() {
     expect(rows, ['TECHCOMBANK', '4111 1111 1111 1111', 'NGUYEN VAN AN']);
   });
 
+  test('mergeScanResults keeps the best value of each field across passes', () {
+    final merged = mergeScanResults(const [
+      CardScanResult(number: '4111111111111112', holder: 'NGUYEN VAN AM', expiry: '05/22'),
+      CardScanResult(number: '4111111111111111', numberVerified: true, holder: 'NGUYEN VAN AN', expiry: '05/29'),
+      CardScanResult(holder: 'NGUYEN VAN AN', issuer: 'Techcombank', product: CardProduct.debit),
+    ]);
+    expect(merged.number, '4111111111111111');
+    expect(merged.numberVerified, isTrue);
+    expect(merged.holder, 'NGUYEN VAN AN'); // 2 votes beat 1
+    expect(merged.expiry, '05/29'); // latest
+    expect(merged.scheme, CardScheme.visa);
+    expect(merged.issuer, 'Techcombank');
+    expect(merged.product, CardProduct.debit);
+    expect(mergeScanResults(const []).isEmpty, isTrue);
+  });
+
   test('handles nothing useful', () {
     expect(parseCardText([]).isEmpty, isTrue);
   });

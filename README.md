@@ -16,6 +16,16 @@ A comprehensive Flutter application that serves as a digital wallet for NFC card
 - **Real-time Feedback**: Live scan results with detailed card information
 - **Persistent Storage**: SQLite database for reliable card storage
 
+### 🪪 Documents (v1.4.0)
+- **Auto-detect on tap**: a bank card is read over EMV; a card with the ICAO eMRTD chip asks *CCCD or passport?*
+- **Chip CCCD / passport**: photograph the back (MRZ is read by OCR) or type the number, date of birth and
+  expiry, then hold the document on the phone. Reads the MRZ data, the face photo and, on the CCCD, the
+  Vietnamese personal data (DG13). BAC + secure messaging, read-only.
+- **Paper documents**: car/motorbike driving licence, vehicle registration, insurance, other: front and back
+  photos (auto-crop) with OCR prefill of number, name, dates, class and plate.
+- **Private**: fields and photos are AES-256-GCM encrypted in app storage, never in the gallery, and open
+  only after fingerprint/passcode.
+
 ### 📤 Card Sharing (P2P)
 - **Peer-to-Peer Transfer**: Send card data between Android devices via NFC
 - **JSON Serialization**: Secure data exchange with structured card information
@@ -213,14 +223,14 @@ One signed **universal** APK per version: `my_wallet-<version>.apk` (+ `.sha256`
 **Update rules** (so a new APK installs over the old one and keeps all data):
 1. `applicationId` stays `com.phamtuanchip.mywallet` (set in v1.1.0).
 2. Always sign with the same key (`my_wallet/android/keystore/my_wallet-release.jks`, **back it up** together with `key.properties`).
-3. Bump `version:` in `my_wallet/pubspec.yaml`, build number = `major*1000000 + minor*1000 + patch` (`1.1.0+1001000`, `1.2.0+1002000`, …).
+3. Bump `version:` in `my_wallet/pubspec.yaml`, build number = `major*1000000 + minor*1000 + patch` (`1.1.0+1001000`, `1.2.0+1002000`, `1.3.0+1003000`, `1.4.0+1004000`, …).
 4. DB changes only through `onUpgrade` migrations (add tables/columns, never drop user data).
 
 **Local build** → `release/my_wallet-<version>.apk` (git-ignored):
 
 ```powershell
 cd my_wallet
-powershell -ExecutionPolicy Bypass -File tooluild_release.ps1
+powershell -ExecutionPolicy Bypass -File tool\build_release.ps1
 ```
 
 The script checks the version rule, refuses to build without `android/key.properties`, and temporarily
@@ -229,7 +239,7 @@ switches Flutter to JDK 17 (Gradle 8.14 does not run on Android Studio's bundled
 **GitHub Release**: commit the version bump, then push the matching tag:
 
 ```bash
-git tag v1.2.0 && git push origin v1.2.0
+git tag v1.4.0 && git push origin v1.4.0
 ```
 
 `.github/workflows/release.yml` checks that the tag matches `pubspec.yaml`, builds, and attaches the APK to the

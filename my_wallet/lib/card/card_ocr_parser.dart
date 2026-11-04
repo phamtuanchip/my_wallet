@@ -75,6 +75,58 @@ const _holderStopWords = {
   'CHIP', 'CASHBACK', 'REWARDS', 'PREMIER', 'PRIORITY', 'STANDARD', 'TITANIUM',
 };
 
+/// Combines OCR passes over the same card (original, enhanced, rotated…):
+/// a Luhn-verified number wins, the most common holder wins, the latest expiry
+/// wins, other fields take the first value found.
+CardScanResult mergeScanResults(List<CardScanResult> passes) {
+  if (passes.isEmpty) return const CardScanResult();
+  final verified = passes.where((p) => p.number != null && p.numberVerified).toList();
+  final unverified = passes.where((p) => p.number != null && !p.numberVerified).toList()
+    ..sort((a, b) => b.number!.length.compareTo(a.number!.length));
+  final numberPass = verified.isNotEmpty ? verified.first : (unverified.isNotEmpty ? unverified.first : null);
+
+  final holderVotes = <String, int>{};
+  for (final p in passes) {
+    if (p.holder != null) holderVotes[p.holder!] = (holderVotes[p.holder!] ?? 0) + 1;
+  }
+  final holder = holderVotes.isEmpty
+      ? null
+      : (holderVotes.entries.toList()
+            ..sort((a, b) => b.value != a.value ? b.value.compareTo(a.value) : b.key.length.compareTo(a.key.length)))
+          .first
+          .key;
+
+  ({int month, int year})? latest;
+  for (final p in passes) {
+    final e = p.expiry == null ? null : parseExpiry(p.expiry!);
+    if (e != null && (latest == null || e.year > latest.year || (e.year == latest.year && e.month > latest.month))) {
+      latest = e;
+    }
+  }
+
+  T? first<T>(T? Function(CardScanResult) f) {
+    for (final p in passes) {
+      final v = f(p);
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  final number = numberPass?.number;
+  final scheme = number != null && detectScheme(number) != CardScheme.unknown
+      ? detectScheme(number)
+      : first((p) => p.scheme);
+  return CardScanResult(
+    number: number,
+    numberVerified: numberPass?.numberVerified ?? false,
+    holder: holder,
+    expiry: latest == null ? null : formatExpiry(latest.month, latest.year),
+    scheme: scheme,
+    product: first((p) => p.product),
+    issuer: (number != null ? issuerFromNumber(number) : null) ?? first((p) => p.issuer),
+  );
+}
+
 typedef TextPiece = ({String text, double top, double bottom, double left});
 
 /// Merges OCR pieces that sit on the same visual row (their vertical centres are
